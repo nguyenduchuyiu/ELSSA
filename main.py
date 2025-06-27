@@ -1,41 +1,6 @@
-import os
-import signal
-from dotenv import load_dotenv
+from src.layer_1_voice_interface.text_to_speech import TextToSpeech
 
-from elevenlabs.client import ElevenLabs
-from elevenlabs.conversational_ai.conversation import Conversation
-from elevenlabs.conversational_ai.default_audio_interface import DefaultAudioInterface
-
-load_dotenv()
-
-agent_id = os.getenv("AGENT_ID", "")
-api_key = os.getenv("ELEVENLABS_API_KEY", "")
-
-elevenlabs = ElevenLabs(api_key=api_key)
-
-conversation = Conversation(
-    # API client and agent ID.
-    elevenlabs,
-    agent_id,
-
-    # Assume auth is required when API_KEY is set.
-    requires_auth=bool(api_key),
-
-    # Use the default audio interface.
-    audio_interface=DefaultAudioInterface(),
-
-    # Simple callbacks that print the conversation to the console.
-    callback_agent_response=lambda response: print(f"Agent: {response}"),
-    callback_agent_response_correction=lambda original, corrected: print(f"Agent: {original} -> {corrected}"),
-    callback_user_transcript=lambda transcript: print(f"User: {transcript}"),
-
-    # Uncomment if you want to see latency measurements.
-    # callback_latency_measurement=lambda latency: print(f"Latency: {latency}ms"),
-)
-
-conversation.start_session()
-
-signal.signal(signal.SIGINT, lambda sig, frame: conversation.end_session())
-
-conversation_id = conversation.wait_for_session_end()
-print(f"Conversation ID: {conversation_id}")
+tts = TextToSpeech()
+tts.speak("Honestly as a blink for 7 years, the rosie i knew when i first was getting into blackpink is SO different now compared to before. I can tell Rosé had pressured to be this “perfect” image of an idol, especially a YG idol in korea. So the fact she’s growing (not only her but all four of the members) not only as an artist but as a person and her emotions she’s able to express to people is just a good feeling to hear and see. I’m really glad there’s people by rosie’s side that supported and pushed her.")
+# Close the TTS instance
+tts.close()

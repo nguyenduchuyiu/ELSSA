@@ -4,3 +4,4 @@ openai
 dotenv
 pillow
 langchain_community
+sounddevice
