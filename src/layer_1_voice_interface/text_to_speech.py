@@ -20,7 +20,7 @@ class TextToSpeech:
     
     DEFAULT_BASE_DIR = 'openvoice/checkpoints/base_speakers/EN'
     DEFAULT_CONVERTER_DIR = 'openvoice/checkpoints/converter'
-    DEFAULT_REFERENCE_PATH = 'openvoice/resources/ref_voice.mp3'
+    DEFAULT_REFERENCE_PATH = 'assets/audio/ref_voice.mp3'
     DEFAULT_OUTPUT_DIR = 'openvoice/outputs'
     
     def __init__(
