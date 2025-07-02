@@ -3,7 +3,8 @@ import queue
 import numpy as np
 import time
 import re
-from typing import List, Optional, Callable
+import asyncio
+from typing import List, Optional, Callable, Union, Awaitable
 from whispercpp import Whisper
 
 from .audio_manager import AudioManager
@@ -47,8 +48,8 @@ class SpeechToText:
         num_threads: int = 4,
         queue_maxsize: int = 10,
         silence_threshold: float = 3.0,  # 3 seconds of silence
-        silence_callback: Optional[Callable] = None,
-        text_callback: Optional[Callable[[str], None]] = None,
+        silence_callback: Optional[Union[Callable, Callable[[], Awaitable[None]]]] = None,
+        text_callback: Optional[Union[Callable[[str], None], Callable[[str], Awaitable[None]]]] = None,
     ):
         # Configuration
         self.sample_rate = sample_rate
@@ -213,9 +214,24 @@ class SpeechToText:
                 
                 print(f"✅ Meaningful text detected: '{cleaned_text}'")
                 
-                # Notify callback if provided
+                # Start new silence timer after meaningful text
+                self.silence_timer = threading.Timer(self.silence_threshold, self._on_silence)
+                self.silence_timer.start()
+                print(f"🔄 Silence timer restarted - waiting {self.silence_threshold}s for next input")
+                
+                # Notify callback if provided (support both sync and async)
                 if self.text_callback:
-                    self.text_callback(cleaned_text)
+                    if asyncio.iscoroutinefunction(self.text_callback):
+                        # Async callback - run in new task
+                        try:
+                            loop = asyncio.get_event_loop()
+                            loop.create_task(self.text_callback(cleaned_text))
+                        except RuntimeError:
+                            # No event loop, just call sync version if possible
+                            pass
+                    else:
+                        # Sync callback
+                        self.text_callback(cleaned_text)
             else:
                 # Start silence timer if no meaningful text and no timer running
                 if self.last_text_time is None:
@@ -237,7 +253,41 @@ class SpeechToText:
         print(f"\n🔇 {self.silence_threshold}s silence detected")
         self.silence_detected.set()
         if self.silence_callback:
-            self.silence_callback()
+            if asyncio.iscoroutinefunction(self.silence_callback):
+                # Async callback - run in new task
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.create_task(self.silence_callback())
+                except RuntimeError:
+                    # No event loop, just skip async callback
+                    pass
+            else:
+                # Sync callback
+                self.silence_callback()
+
+    async def wait_for_silence_or_text_async(self, timeout: float = 100) -> tuple[bool, str]:
+        """
+        Async version of wait_for_silence_or_text.
+        Wait for either silence detection or timeout
+        
+        Returns:
+            (silence_detected, final_cleaned_text)
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if self.silence_detected.is_set():
+                with self._all_text_lock:
+                    # Join all meaningful text and apply final filtering
+                    final_text = " ".join(self._all_text).strip()
+                    final_cleaned = self._filter_whisper_noise(final_text)
+                return True, final_cleaned
+            await asyncio.sleep(0.1)  # Non-blocking sleep
+        
+        # Timeout reached
+        with self._all_text_lock:
+            final_text = " ".join(self._all_text).strip()
+            final_cleaned = self._filter_whisper_noise(final_text)
+        return False, final_cleaned
 
     def wait_for_silence_or_text(self, timeout: float = 10.0) -> tuple[bool, str]:
         """
@@ -268,6 +318,7 @@ class SpeechToText:
         with self._all_text_lock:
             self._all_text.clear()
         self.last_text_time = None
+        print("🔄 ASR session reset")
 
     def start(self):
         """Starts ASR service"""
@@ -275,9 +326,20 @@ class SpeechToText:
             return
             
         print("▶️ Starting SpeechToText...")
+        
+        # Reset stop event for new session
+        self.stop_event.clear()
+        
+        # Create new threads if previous ones have finished
+        if not self._recorder_thread.is_alive():
+            self._recorder_thread = threading.Thread(target=self._record_stream, daemon=True)
+        if not self._worker_thread.is_alive():
+            self._worker_thread = threading.Thread(target=self._asr_worker, daemon=True)
+        
         self.is_running = True
         self._recorder_thread.start()
         self._worker_thread.start()
+        print("✅ SpeechToText started")
 
     def stop(self) -> str:
         """
@@ -296,6 +358,36 @@ class SpeechToText:
             self._recorder_thread.join()
         if self._worker_thread.is_alive():
             self._worker_thread.join()
+            
+        self.audio_manager.close()
+        self.is_running = False
+        print("✅ SpeechToText stopped")
+        
+        # Return the concatenated and filtered text
+        with self._all_text_lock:
+            final_text = " ".join(self._all_text).strip()
+            return self._filter_whisper_noise(final_text)
+
+    async def stop_async(self) -> str:
+        """
+        Async version of stop. Stops ASR service and returns all recognized text.
+        
+        Returns:
+            All recognized text joined as a single string, filtered
+        """
+        if not self.is_running:
+            return ""
+            
+        print("\n❌ Stopping SpeechToText...")
+        self.stop_event.set()
+        
+        # Run thread joins in executor to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        
+        if self._recorder_thread.is_alive():
+            await loop.run_in_executor(None, self._recorder_thread.join)
+        if self._worker_thread.is_alive():
+            await loop.run_in_executor(None, self._worker_thread.join)
             
         self.audio_manager.close()
         self.is_running = False
