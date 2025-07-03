@@ -46,7 +46,6 @@ unzip checkpoints_1226.zip
 
 - Make sure you have [uv](https://github.com/astral-sh/uv) and Python 3.10.12 installed on your system.
 - If you encounter permission issues when cloning OpenVoice, check your SSH keys or use HTTPS instead of SSH.
-
 ---
 
 Happy installing and enjoy using E.L.S.S.A!

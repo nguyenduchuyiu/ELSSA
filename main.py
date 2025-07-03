@@ -8,15 +8,27 @@ import asyncio
 import numpy as np
 import gc
 from enum import Enum
+import yaml
+
+# Load configuration with error handling
+try:
+    with open('config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+except Exception as e:
+    print(f"⚠️ Warning: Could not load config.yaml ({e}). Using defaults.")
+    config = {
+        'silence_timeout': 5.0,
+        'wake_word_models': ["models/openwakeword/alexa_v0.1.tflite"]
+    }
 
 # Path đến file .wav quick reply
 WAKE_AUDIO_PATH = "assets/audio/elssa_online.wav"
 
-# Wake word model
-WAKE_WORD_MODEL = ["models/openwakeword/alexa_v0.1.tflite"]
+# Wake word models from config
+WAKE_WORD_MODELS = config['wake_word_models']
 
 # Session config
-SILENCE_TIMEOUT = 5.0     
+SILENCE_TIMEOUT = config['silence_timeout']
 ASR_TIMEOUT = 60         # timeout cho mỗi ASR session
 MAX_SILENCE_RETRIES = 3    # 3 lần không nói gì thì về idle
 
@@ -70,7 +82,7 @@ async def transition_to_idle():
         
         # Start wake word detection for IDLE state
         try:
-            wake_handler = WakeWordHandler(wakeword_models=WAKE_WORD_MODEL)
+            wake_handler = WakeWordHandler(wakeword_models=WAKE_WORD_MODELS)
             wake_handler.register_callback(on_wake_detected)
             wake_handler.start()
             print("👂 IDLE: Listening for wake word 'alexa'...")
@@ -149,12 +161,12 @@ async def speak_with_interrupt_support(text: str) -> bool:
     # Clear interrupt flag
     _interrupt_detected.clear()
         
-    # Speak with interrupt monitoring
+    # SOLUTION: Enable interruptible TTS with proper callback
     result = await tts.speak_async(
         text, 
         play_audio=True,
-        interruptible=True,
-        interrupt_callback=on_interrupt_detected
+        interruptible=True,  # Enable interrupt detection
+        interrupt_callback=on_interrupt_detected  # Proper callback setup
     )
     
     if result['interrupted']:

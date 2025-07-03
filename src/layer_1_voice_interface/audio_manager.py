@@ -3,6 +3,21 @@ import sounddevice as sd
 import asyncio
 import threading
 from typing import Callable, Optional, List, Tuple
+import yaml
+import os
+from scipy.signal import resample
+
+# Load configuration with error handling
+try:
+    with open('config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+except Exception as e:
+    print(f"⚠️ Warning: Could not load config.yaml ({e}). Using defaults.")
+    config = {
+        'sample_rate': 16000,
+        'input_device': None,
+        'output_device': None
+    }
 
 class AudioManager:
     """
@@ -10,7 +25,7 @@ class AudioManager:
     Provides unified interface for recording, playback, and stream management.
     """
     
-    DEFAULT_SAMPLE_RATE = 16000
+    DEFAULT_SAMPLE_RATE = config['sample_rate']
     DEFAULT_CHANNELS = 1
     DEFAULT_DTYPE = 'int16'
     
@@ -42,6 +57,7 @@ class AudioManager:
             self.stop_recording()
             
         self._input_stream = sd.InputStream(
+            device=config['input_device'],
             samplerate=self.sample_rate,
             channels=self.channels,
             dtype=self.dtype,
@@ -82,8 +98,17 @@ class AudioManager:
         print(f"🛑 Setting stop event (fade_out: {fade_out_ms}ms)")
         self._playback_stop_event.set()
         
-        # For OutputStream-based playback, the abort will be handled in the playback loop
-        # This just sets the signal - the actual stopping happens in _play_audio_interruptible
+    
+
+    def resample_audio(self, audio_data: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
+        """
+        Resample audio data to the desired sample rate.
+        """
+        if from_rate == to_rate:
+            return audio_data
+        target_len = int(len(audio_data) * to_rate / from_rate)
+        return resample(audio_data, target_len).astype(np.float32)
+
     
     async def play_audio_async(
         self, 
@@ -102,6 +127,9 @@ class AudioManager:
         Returns:
             True if completed normally, False if interrupted
         """
+        
+        audio_data = self.resample_audio(audio_data, from_rate=22050, to_rate=48000)
+
         self._playback_stop_event.clear()
         
         # Normalize and amplify audio for proper volume
@@ -139,6 +167,7 @@ class AudioManager:
     async def _play_audio_interruptible(self, audio_data: np.ndarray) -> bool:
         """
         Play audio with ability to be interrupted via stop_playback()
+        Uses chunk-based streaming for more responsive interrupts and smoother playback
         """
         audio_with_fade = self.apply_fade_in(audio_data, fade_ms=50)
         expected_duration = len(audio_with_fade) / self.sample_rate
@@ -148,34 +177,59 @@ class AudioManager:
         self._is_playing = True
 
         try:
-            # Create OutputStream for proper interrupt control
+            # IMPROVED: Use chunk-based streaming for more responsive interrupts
+            chunk_size = int(self.sample_rate * 0.1)  # 100ms chunks for responsive interrupts
             stream = sd.OutputStream(
+                device=config['output_device'],
                 samplerate=self.sample_rate,
                 channels=1,
-                dtype='float32'
+                dtype='float32',
+                blocksize=chunk_size
             )
 
             with stream:
-                stream.write(audio_with_fade)
+                # Stream audio in small chunks for better interrupt responsiveness
                 start_time = asyncio.get_event_loop().time()
-
-                # Monitor stream while it's active
-                while stream.active:
-                    # Check for interrupt signal
+                audio_pos = 0
+                
+                while audio_pos < len(audio_with_fade):
+                    # Check for interrupt BEFORE writing each chunk
                     if self._playback_stop_event.is_set():
-                        print("🔄 Interrupt detected - stopping playback")
+                        print("⚡ Interrupt detected - stopping playback immediately")
                         stream.abort()
-                        await asyncio.sleep(0.2)  # Allow fade-out to apply if needed
+                        # Apply quick fade-out to remaining audio to avoid clicks
+                        await asyncio.sleep(0.05)  # Short fade-out time
                         self._is_playing = False
                         return False
-
-                    # Timeout safety
+                    
+                    # Get next chunk
+                    chunk_end = min(audio_pos + chunk_size, len(audio_with_fade))
+                    audio_chunk = audio_with_fade[audio_pos:chunk_end]
+                    
+                    # Pad chunk if necessary
+                    if len(audio_chunk) < chunk_size:
+                        padding = np.zeros(chunk_size - len(audio_chunk), dtype=np.float32)
+                        audio_chunk = np.concatenate([audio_chunk, padding])
+                    
+                    # Write chunk to stream
+                    stream.write(audio_chunk)
+                    audio_pos = chunk_end
+                    
+                    # Brief yield to event loop for interrupt checking
+                    await asyncio.sleep(0.001)  # 1ms yield - very responsive
+                    
+                    # Safety timeout check
                     elapsed = asyncio.get_event_loop().time() - start_time
-                    if elapsed > expected_duration + 1.0:
+                    if elapsed > expected_duration + 2.0:
                         print(f"⚠️ Playback timeout after {elapsed:.2f}s")
                         break
 
-                    await asyncio.sleep(0.01)  # Check every 10ms
+                # Wait for stream to finish current buffers
+                while stream.active and not self._playback_stop_event.is_set():
+                    await asyncio.sleep(0.01)
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    if elapsed > expected_duration + 2.0:
+                        break
 
             print("✅ Interruptible playback completed successfully")
             self._is_playing = False
@@ -194,6 +248,7 @@ class AudioManager:
             self.stop_recording()
             
         self._input_stream = sd.InputStream(
+            device=config['input_device'],
             samplerate=self.sample_rate,
             channels=self.channels,
             dtype=self.dtype,

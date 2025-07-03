@@ -1,12 +1,32 @@
-import numpy as np
 import sounddevice as sd
 
-fs = 16000  # Sample rate
-duration = 2.0  # seconds
-t = np.linspace(0, duration, int(fs*duration), endpoint=False)
+def check_supported_sample_rates():
+    rates_to_test = [8000, 16000, 22050, 32000, 44100, 48000, 96000]
+    devices = sd.query_devices()
+    
+    for idx, device in enumerate(devices):
+        name = device['name']
+        max_input_channels = device['max_input_channels']
+        max_output_channels = device['max_output_channels']
+        print(f"\n🔍 Device {idx}: {name}")
+        
+        if max_input_channels > 0:
+            print("  🎙 Supported input sample rates:")
+            for rate in rates_to_test:
+                try:
+                    sd.check_input_settings(device=idx, samplerate=rate)
+                    print(f"    ✅ {rate} Hz")
+                except:
+                    print(f"    ❌ {rate} Hz")
+        
+        if max_output_channels > 0:
+            print("  🔊 Supported output sample rates:")
+            for rate in rates_to_test:
+                try:
+                    sd.check_output_settings(device=idx, samplerate=rate)
+                    print(f"    ✅ {rate} Hz")
+                except:
+                    print(f"    ❌ {rate} Hz")
 
-# Tạo sóng sine có biên độ giống Elssa TTS
-tone = 0.4 * np.sin(2 * np.pi * 440 * t)  # 440Hz là nốt La (A4)
-print("Range:", tone.min(), tone.max())  # -0.4 ~ 0.4
-
-sd.play(tone, samplerate=fs, blocking=True)
+if __name__ == "__main__":
+    check_supported_sample_rates()

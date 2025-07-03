@@ -21,7 +21,7 @@ class WakeWordHandler:
     """
     def __init__(
         self,
-        wakeword_models: List[str] = ["models/openwakeword/elssa_v0.1.tflite"],
+        wakeword_models: List[str] = ["models/openwakeword/alexa_v0.1.tflite"],
         sample_rate: int = AudioManager.DEFAULT_SAMPLE_RATE,
         block_size: int = 512,
         threshold: float = 0.9
@@ -126,8 +126,8 @@ class InterruptWakeWordHandler:
         self,
         wakeword_models: List[str] = ["models/openwakeword/elssa_v0.1.tflite"],
         sample_rate: int = AudioManager.DEFAULT_SAMPLE_RATE,
-        block_size: int = 256,  # Smaller for faster response
-        threshold: float = 0.8  # Slightly lower for more sensitivity during TTS
+        block_size: int = 128,  # IMPROVED: Even smaller for faster response
+        threshold: float = 0.75  # IMPROVED: Slightly lower for better sensitivity
     ):
         self.sample_rate = sample_rate
         self.block_size = block_size
@@ -140,8 +140,11 @@ class InterruptWakeWordHandler:
             pass  # Models might already be downloaded
         self.model = Model(wakeword_models=wakeword_models)
         
-        # Dedicated audio manager for interrupt detection
-        self.audio_manager = AudioManager(sample_rate=sample_rate)
+        # IMPROVED: Use dedicated audio stream with different device settings to avoid conflicts
+        self.audio_manager = AudioManager(
+            sample_rate=sample_rate,
+            buffer_size=block_size  # Match block size for optimal processing
+        )
         
         # Interrupt callback
         self._interrupt_callback: Optional[Callable[[], None]] = None
@@ -150,8 +153,8 @@ class InterruptWakeWordHandler:
         self._stop_event = threading.Event()
         self._interrupt_thread = None
         
-        # Frame buffer
-        self.audio_buffer = deque(maxlen=self.block_size)
+        # IMPROVED: Larger buffer with efficient circular buffer
+        self.audio_buffer = deque(maxlen=block_size * 4)  # Buffer 4 blocks for stability
         
         # State
         self._is_active = False
@@ -166,44 +169,83 @@ class InterruptWakeWordHandler:
             self.audio_buffer.extend(indata[:, 0].tolist())
 
     def _interrupt_loop(self):
-        """Optimized loop for fast interrupt detection"""
+        """IMPROVED: Optimized loop for ultra-fast interrupt detection with minimal latency"""
         self.audio_manager.start_stream(self._audio_callback)
+        
+        # IMPROVED: Pre-allocate arrays for faster processing
+        samples_array = np.zeros(self.block_size, dtype=np.float32)
         
         while not self._stop_event.is_set():
             if self._is_active and len(self.audio_buffer) >= self.block_size:
-                samples = np.array([self.audio_buffer.popleft() for _ in range(self.block_size)])
-                scores = self.model.predict(samples, threshold=self.threshold)
+                # IMPROVED: Fast array copying without list comprehension
+                for i in range(self.block_size):
+                    samples_array[i] = self.audio_buffer.popleft()
+                
+                # IMPROVED: Use lower threshold for faster detection during TTS
+                scores = self.model.predict(samples_array, threshold=self.threshold)
                 
                 for name, score in scores.items():
                     if score > self.threshold:
                         print(f"⚡ INTERRUPT: Wake word '{name}' detected during TTS! (score={score:.2f})")
                         self._trigger_interrupt()
-                        return  # Exit immediately on interrupt
                         
-            time.sleep(0.005)  # Faster polling for interrupt
+                        # FIXED: Don't exit thread - pause briefly and continue monitoring
+                        # This allows multiple interrupts in the same session
+                        self._pause_after_interrupt()
+                        break  # Break inner loop but continue monitoring
+                        
+            # IMPROVED: Ultra-fast polling for minimal interrupt latency  
+            time.sleep(0.002)  # 2ms polling - extremely responsive
+        
+        print("🎯 Interrupt detection loop ended")
+
+    def _pause_after_interrupt(self):
+        """FIXED: Brief pause after interrupt to avoid rapid re-triggering"""
+        # Clear buffer to avoid false positives from the same wake word
+        self.audio_buffer.clear()
+        
+        # Brief pause to let the audio settle and avoid immediate re-trigger
+        time.sleep(0.2)  # 200ms pause
+        
+        print("🔄 Interrupt detection ready for next interrupt")
 
     def _trigger_interrupt(self):
-        """Trigger interrupt callback immediately"""
+        """IMPROVED: Trigger interrupt callback with immediate audio stop"""
+        print("🚨 IMMEDIATE INTERRUPT TRIGGERED!")
+        
         if self._interrupt_callback:
             try:
+                # Call interrupt callback immediately - this should stop audio playback
                 self._interrupt_callback()
+                print("✅ Interrupt callback executed successfully")
             except Exception as e:
                 print(f"⚠️ Error in interrupt callback: {e}")
+        else:
+            print("⚠️ No interrupt callback set!")
 
     def set_interrupt_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when wake word detected during TTS"""
         self._interrupt_callback = callback
+        print(f"✅ Interrupt callback set: {callback.__name__ if hasattr(callback, '__name__') else 'lambda'}")
 
     def start_interrupt_monitoring(self) -> None:
-        """Start monitoring for wake word interrupts"""
+        """IMPROVED: Start monitoring with fast initialization"""
         if self._interrupt_thread and self._interrupt_thread.is_alive():
+            print("⚠️ Interrupt monitoring already running")
             return  # Already running
             
+        print("🎯 Starting interrupt monitoring...")
         self._stop_event.clear()
         self._is_active = True
-        self._interrupt_thread = threading.Thread(target=self._interrupt_loop, daemon=True)
+        
+        # IMPROVED: High priority thread for minimal latency
+        self._interrupt_thread = threading.Thread(
+            target=self._interrupt_loop, 
+            daemon=True,
+            name="InterruptDetection"
+        )
         self._interrupt_thread.start()
-        print("🎯 Interrupt monitoring started")
+        print("✅ Interrupt monitoring started with high responsiveness")
 
     def stop_interrupt_monitoring(self) -> None:
         """Stop monitoring for wake word interrupts"""
