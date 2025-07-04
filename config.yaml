@@ -6,8 +6,8 @@ input_device: null   # null = default input device, or specify device ID/name
 output_device: null  # null = default output device, or specify device ID/name
 
 # Wake Word Detection
-wake_word_models:
-  - "models/openwakeword/alexa_v0.1.tflite"
+wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
+interrupt_wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 
 # Session Management
 silence_timeout: 3.0  # seconds before considering silence
@@ -21,3 +21,7 @@ asr_timeout: 60  # timeout for ASR session
 
 # System Behavior
 max_silence_retries: 3  # number of silence attempts before returning to idle
+
+# LLM Settings
+model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-IQ3_M.gguf"
+n_ctx: 16384

@@ -1,322 +1,405 @@
+import numpy as np
+import asyncio
+import gc
+import yaml
+from enum import Enum
+from scipy.io.wavfile import read
+from typing import Optional, Callable
+
 from src.layer_1_voice_interface.wake_word_handler import WakeWordHandler
 from src.layer_1_voice_interface.speech_to_text import SpeechToText
 from src.layer_1_voice_interface.text_to_speech import TextToSpeech
-from scipy.io.wavfile import read
-import threading
-import time
-import asyncio
-import numpy as np
-import gc
-from enum import Enum
-import yaml
+from src.layer_2_agentic_reasoning.llm_runner import LLMRunner
+from src.layer_2_agentic_reasoning.context_manager import ContextManager
 
-# Load configuration with error handling
-try:
-    with open('config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-except Exception as e:
-    print(f"⚠️ Warning: Could not load config.yaml ({e}). Using defaults.")
-    config = {
-        'silence_timeout': 5.0,
-        'wake_word_models': ["models/openwakeword/alexa_v0.1.tflite"]
-    }
-
-# Path đến file .wav quick reply
-WAKE_AUDIO_PATH = "assets/audio/elssa_online.wav"
-
-# Wake word models from config
-WAKE_WORD_MODELS = config['wake_word_models']
-
-# Session config
-SILENCE_TIMEOUT = config['silence_timeout']
-ASR_TIMEOUT = 60         # timeout cho mỗi ASR session
-MAX_SILENCE_RETRIES = 3    # 3 lần không nói gì thì về idle
 
 class SystemState(Enum):
-    IDLE = "idle"              # Chỉ lắng nghe wake word
-    ACTIVE = "active"          # Đang trong conversation session
-    SPEAKING = "speaking"      # Đang phát TTS, có thể bị interrupt
-    ACTIVE_LISTENING = "active_listening"  # Chuyển từ interrupt, lắng nghe ngay
+    IDLE = "idle"
+    ACTIVE = "active"
+    SPEAKING = "speaking"
+    ACTIVE_LISTENING = "active_listening"
 
-# Global state
-current_state = SystemState.IDLE
-wake_handler = None
-asr = None
-tts = None
-state_lock = asyncio.Lock()
 
-# Interrupt handling
-_interrupt_detected = asyncio.Event()
-
-async def transition_to_idle():
-    """Chuyển hệ thống về trạng thái IDLE"""
-    global current_state, wake_handler, asr, tts
+class ELSSAConfig:
+    """Configuration management for ELSSA system"""
     
-    async with state_lock:
-        print("🔄 Transitioning to IDLE state...")
-        current_state = SystemState.IDLE
+    def __init__(self, config_file: str = 'config.yaml'):
+        with open(config_file, 'r') as f:
+            self.config = yaml.safe_load(f)
         
-        # Cleanup active state resources
-        if asr is not None:
+        self.wake_audio_path = "assets/audio/elssa_online.wav"
+        self.silence_timeout = self.config['silence_timeout']
+        self.asr_timeout = 60
+        self.max_silence_retries = 3
+        self.context_dir = "data/context"
+        self.max_context_length = 10
+
+
+class ELSSASystem:
+    """Main ELSSA system class that manages all components and state transitions"""
+    
+    def __init__(self, config: ELSSAConfig):
+        self.config = config
+        self.current_state = SystemState.IDLE
+        self.state_lock = asyncio.Lock()
+        self._interrupt_detected = asyncio.Event()
+        
+        # Components
+        self.wake_handler: Optional[WakeWordHandler] = None
+        self.asr: Optional[SpeechToText] = None
+        self.tts: Optional[TextToSpeech] = None
+        self.llm_runner: Optional[LLMRunner] = None
+        
+        # Context management
+        self.context_manager = ContextManager(
+            context_dir=self.config.context_dir,
+            max_context_length=self.config.max_context_length
+        )
+    
+    async def cleanup_resources(self):
+        """Clean up all system resources"""
+        if self.asr:
             try:
-                if asr.is_running:
-                    await asr.stop_async()
-                asr = None
+                if self.asr.is_running:
+                    await self.asr.stop_async()
+                self.asr = None
                 print("✅ ASR stopped")
             except Exception as e:
                 print(f"⚠️ Error stopping ASR: {e}")
-                asr = None
+                self.asr = None
         
-        if tts is not None:
+        if self.tts:
             try:
-                tts.close()
-                tts = None
+                self.tts.close()
+                self.tts = None
                 print("✅ TTS cleaned up")
             except Exception as e:
                 print(f"⚠️ Error cleaning TTS: {e}")
-                tts = None
+                self.tts = None
+
+        if self.llm_runner:
+            try:
+                self.llm_runner.stop_server()
+                self.llm_runner = None
+                print("✅ LLM runner stopped")
+            except Exception as e:
+                print(f"⚠️ Error stopping LLM runner: {e}")
+                self.llm_runner = None
         
-        # Force garbage collection
+        if self.wake_handler:
+            try:
+                self.wake_handler.stop()
+                self.wake_handler = None
+                print("✅ Wake handler stopped")
+            except Exception as e:
+                print(f"⚠️ Error stopping wake handler: {e}")
+                self.wake_handler = None
+        
+        # End current conversation session
+        if self.context_manager:
+            try:
+                await self.context_manager.end_current_session()
+                print("✅ Context session ended")
+            except Exception as e:
+                print(f"⚠️ Error ending context session: {e}")
+        
         gc.collect()
         print("🗑️ Memory cleaned")
-        
-        # Start wake word detection for IDLE state
+    
+    async def transition_to_idle(self):
+        """Transition to IDLE state"""
+        async with self.state_lock:
+            print("🔄 Transitioning to IDLE state...")
+            self.current_state = SystemState.IDLE
+            
+            await self.cleanup_resources()
+            
+            # Start wake word detection
+            try:
+                self.wake_handler = WakeWordHandler()
+                self.wake_handler.register_callback(self._on_wake_detected)
+                self.wake_handler.start()
+                print("👂 IDLE: Listening for wake word 'alexa'...")
+            except Exception as e:
+                print(f"❌ Error starting wake detection: {e}")
+    
+    async def transition_to_active(self):
+        """Transition to ACTIVE state"""
+        async with self.state_lock:
+            print("🔄 Transitioning to ACTIVE state...")
+            self.current_state = SystemState.ACTIVE
+            
+            # Stop wake word detection
+            if self.wake_handler:
+                self.wake_handler.stop()
+                self.wake_handler = None
+            
+            # Initialize components
+            self.tts = TextToSpeech()
+            print("✅ TTS initialized")
+            
+            self.asr = SpeechToText(silence_threshold=self.config.silence_timeout)
+            print("✅ ASR initialized")
+
+            self.llm_runner = LLMRunner()
+            self.llm_runner.launch()
+            print("✅ LLM runner initialized")
+            
+            # Start new conversation session
+            session_id = await self.context_manager.start_new_session()
+            print(f"📝 Started conversation session: {session_id}")
+                
+            # Play wake acknowledgment
+            await self._play_wake_audio()
+    
+    async def transition_to_speaking(self):
+        """Transition to SPEAKING state"""
+        async with self.state_lock:
+            print("🔄 Transitioning to SPEAKING state...")
+            self.current_state = SystemState.SPEAKING
+            print("🗣️ SPEAKING: Now speaking, can be interrupted")
+
+    async def transition_to_active_listening(self):
+        """Transition to ACTIVE_LISTENING state"""
+        async with self.state_lock:
+            print("🔄 Transitioning to ACTIVE_LISTENING state...")
+            self.current_state = SystemState.ACTIVE_LISTENING
+            print("👂 ACTIVE_LISTENING: Ready to listen immediately after interrupt")
+    
+    async def _play_wake_audio(self):
+        """Play wake acknowledgment audio"""
         try:
-            wake_handler = WakeWordHandler(wakeword_models=WAKE_WORD_MODELS)
-            wake_handler.register_callback(on_wake_detected)
-            wake_handler.start()
-            print("👂 IDLE: Listening for wake word 'alexa'...")
+            sr, wav = read(self.config.wake_audio_path)
+            wav = wav.astype(np.float32) / 32768.0
+            await self.tts.audio_manager.play_audio_async(wav, blocking=True)
         except Exception as e:
-            print(f"❌ Error starting wake detection: {e}")
+            print(f"⚠️ Error playing wake audio: {e}")
+    
+    def _on_interrupt_detected(self):
+        """Callback for interrupt detection"""
+        print("⚡ INTERRUPT DETECTED during TTS!")
+        self._interrupt_detected.set()
 
-async def transition_to_active():
-    """Chuyển hệ thống về trạng thái ACTIVE"""
-    global current_state, wake_handler, asr, tts
-    
-    async with state_lock:
-        print("🔄 Transitioning to ACTIVE state...")
-        current_state = SystemState.ACTIVE
+    async def _on_wake_detected(self):
+        """Callback for wake word detection"""
+        if self.current_state == SystemState.IDLE:
+            print("🔔 Wake word detected!")
+            await self.transition_to_active()
+            asyncio.create_task(self._active_conversation_loop())
+
+    async def speak_with_interrupt_support(self, text: str) -> bool:
+        """
+        Speak with interrupt detection support
+        Returns True if completed, False if interrupted
+        """
+        if not self.tts:
+            print("⚠️ TTS not available")
+            return False
         
-        # Stop wake word detection
-        wake_handler.stop()
-        wake_handler = None
-        print("✅ Wake detection stopped")
-        
-        # Initialize TTS and ASR for active state
-        tts = TextToSpeech()
-        print("✅ TTS initialized for ACTIVE state")
-    
-        # Initialize ASR once and reuse throughout conversation
-        asr = SpeechToText(silence_threshold=SILENCE_TIMEOUT)
-        print("✅ ASR initialized for ACTIVE state")
+        await self.transition_to_speaking()
+        self._interrupt_detected.clear()
             
-        # Play wake acknowledgment
-        sr, wav = read(WAKE_AUDIO_PATH)
-        print(f"🔊 Wake audio - Sample rate: {sr}, Shape: {wav.shape}, Range: {wav.min()} to {wav.max()}")
-        wav = wav.astype(np.float32) / 32768.0
-        print(f"🔊 Wake audio normalized - Range: {wav.min():.6f} to {wav.max():.6f}")
-        await tts.audio_manager.play_audio_async(wav, blocking=True)
-        print("🔔 Wake acknowledgment played")
+        result = await self.tts.speak_async(
+            text, 
+            play_audio=True,
+            interruptible=True,
+            interrupt_callback=self._on_interrupt_detected
+        )
         
-        print("🎯 ACTIVE: Ready for conversation")
-
-async def transition_to_speaking():
-    """Chuyển hệ thống về trạng thái SPEAKING"""
-    global current_state
-    
-    async with state_lock:
-        print("🔄 Transitioning to SPEAKING state...")
-        current_state = SystemState.SPEAKING
-        print("🗣️ SPEAKING: Now speaking, can be interrupted")
-
-async def transition_to_active_listening():
-    """Chuyển hệ thống về trạng thái ACTIVE_LISTENING sau interrupt"""
-    global current_state
-    
-    async with state_lock:
-        print("🔄 Transitioning to ACTIVE_LISTENING state...")
-        current_state = SystemState.ACTIVE_LISTENING
-        print("👂 ACTIVE_LISTENING: Ready to listen immediately after interrupt")
-
-def on_interrupt_detected():
-    """Callback khi detect wake word trong lúc đang nói (TTS)"""
-    global _interrupt_detected
-    print("⚡ INTERRUPT DETECTED during TTS!")
-    _interrupt_detected.set()
-
-async def speak_with_interrupt_support(text: str) -> bool:
-    """
-    Nói với hỗ trợ interrupt detection. 
-    Returns True if completed, False if interrupted.
-    """
-    global tts, current_state
-    
-    if not tts:
-        print("⚠️ TTS not available")
-        return False
-    
-    # Transition to SPEAKING state
-    await transition_to_speaking()
-    
-    # Clear interrupt flag
-    _interrupt_detected.clear()
-        
-    # SOLUTION: Enable interruptible TTS with proper callback
-    result = await tts.speak_async(
-        text, 
-        play_audio=True,
-        interruptible=True,  # Enable interrupt detection
-        interrupt_callback=on_interrupt_detected  # Proper callback setup
-    )
-    
-    if result['interrupted']:
-        print("🔄 Speech was interrupted")
-        # Transition to active listening immediately
-        await transition_to_active_listening()
-        return False
-    else:
-        print("✅ Speech completed")
-        # Return to active conversation state
-        async with state_lock:
-            current_state = SystemState.ACTIVE
-        return True
-
-async def on_wake_detected():
-    """Callback khi wake word được phát hiện"""
-    if current_state == SystemState.IDLE:
-        print("🔔 Wake word detected!")
-        await transition_to_active()
-        # Start conversation task
-        asyncio.create_task(active_conversation_loop())
-
-async def active_conversation_loop():
-    """Main conversation loop cho ACTIVE state"""
-    global asr, tts, current_state
-    
-    silence_count = 0
-    
-    while current_state in [SystemState.ACTIVE, SystemState.ACTIVE_LISTENING] and silence_count < MAX_SILENCE_RETRIES:
-        
-        # Handle different states
-        if current_state == SystemState.ACTIVE_LISTENING:
-            # Jump straight to listening after interrupt
-            print("🎤 ACTIVE_LISTENING: Listening immediately after interrupt...")
-            async with state_lock:
-                current_state = SystemState.ACTIVE
-        elif current_state == SystemState.ACTIVE:
-            print(f"🎤 ACTIVE: Listening... (silence count: {silence_count}/{MAX_SILENCE_RETRIES})")
+        if result['interrupted']:
+            print("🔄 Speech was interrupted")
+            await self.transition_to_active_listening()
+            return False
         else:
-            # If not in ACTIVE or ACTIVE_LISTENING state, break out
-            break
+            print("✅ Speech completed")
+            async with self.state_lock:
+                self.current_state = SystemState.ACTIVE
+            return True
+
+    async def _process_user_input_streaming(self, user_text: str) -> bool:
+        """
+        Process user input and stream response directly to TTS
+        Returns True if completed, False if interrupted
+        """
+        if not self.llm_runner or not self.tts:
+            fallback_response = "Sorry, I'm having trouble processing your request."
+            return await self.speak_with_interrupt_support(fallback_response)
         
+        # Add user message to context
+        await self.context_manager.add_message("user", user_text)
+        
+        # Get conversation context for LLM
+        context_messages = await self.context_manager.get_conversation_context()
+        
+        # Start streaming response
+        stream_response = self.llm_runner.chat(context_messages)
+        
+        # Transition to speaking state
+        await self.transition_to_speaking()
+        self._interrupt_detected.clear()
+        
+        print("🤖 Streaming response: ", end="", flush=True)
+        
+        # Stream response directly to TTS
+        full_response = ""
         try:
-            # Reset ASR session for new conversation turn
-            asr.reset_session()
+            # Use TTS streaming capability
+            result = await self.tts.speak_stream_async(
+                stream_response,
+                interruptible=True,
+                interrupt_callback=self._on_interrupt_detected
+            )
             
-            # Start ASR (reuse existing instance)
-            if not asr.is_running:
-                asr.start()
+            # Collect the full response for context saving
+            full_response = result.get('text', '')
             
-            # Wait for user input with timeout
+            if result['interrupted']:
+                print("\n🔄 Speech was interrupted")
+                # Still save partial response to context
+                if full_response:
+                    await self.context_manager.add_message("assistant", full_response)
+                await self.transition_to_active_listening()
+                return False
+            else:
+                print("\n✅ Speech completed")
+                # Save full response to context
+                await self.context_manager.add_message("assistant", full_response)
+                async with self.state_lock:
+                    self.current_state = SystemState.ACTIVE
+                return True
+                
+        except Exception as e:
+            raise e
+
+    async def _process_user_input(self, user_text: str) -> str:
+        """Process user input and generate response (legacy method for non-streaming)"""
+        if not self.llm_runner:
+            return "Sorry, I'm having trouble processing your request."
+        
+        # Add user message to context
+        await self.context_manager.add_message("user", user_text)
+        
+        # Get conversation context for LLM
+        context_messages = await self.context_manager.get_conversation_context()
+        
+        stream_response = self.llm_runner.chat(context_messages)
+        
+        response = ""
+        for chunk in stream_response:
+            response += chunk
+            print(chunk, end="", flush=True)
+        
+        # Add assistant response to context
+        await self.context_manager.add_message("assistant", response)
+        
+        return response
+
+    async def _handle_conversation_turn(self) -> tuple[bool, str]:
+        """
+        Handle a single conversation turn
+        Returns (has_input, user_text)
+        """
+        try:
+            self.asr.reset_session()
+            
+            if not self.asr.is_running:
+                self.asr.start()
+            
             try:
                 silence_detected, user_text = await asyncio.wait_for(
-                    asr.wait_for_silence_or_text_async(timeout=ASR_TIMEOUT),
-                    timeout=ASR_TIMEOUT + 1.0  # Extra buffer for async version
+                    self.asr.wait_for_silence_or_text_async(timeout=self.config.asr_timeout),
+                    timeout=self.config.asr_timeout + 1.0
                 )
             except asyncio.TimeoutError:
                 print("⏰ Conversation timeout")
                 silence_detected, user_text = False, ""
             
-            # Stop ASR (but don't destroy instance)
-            if asr.is_running:
-                await asr.stop_async()
+            if self.asr.is_running:
+                await self.asr.stop_async()
             
-            if user_text and len(user_text.strip()) > 0:
-                # Got meaningful input - reset silence count
+            has_meaningful_input = user_text and len(user_text.strip()) > 0
+            return has_meaningful_input, user_text
+            
+        except Exception as e:
+            print(f"⚠️ Error in conversation turn: {e}")
+            if self.asr and self.asr.is_running:
+                await self.asr.stop_async()
+            return False, ""
+
+    async def _active_conversation_loop(self):
+        """Main conversation loop for ACTIVE state"""
+        silence_count = 0
+        
+        while (self.current_state in [SystemState.ACTIVE, SystemState.ACTIVE_LISTENING] 
+               and silence_count < self.config.max_silence_retries):
+            
+            # Handle state transitions
+            if self.current_state == SystemState.ACTIVE_LISTENING:
+                print("🎤 ACTIVE_LISTENING: Listening immediately after interrupt...")
+                async with self.state_lock:
+                    self.current_state = SystemState.ACTIVE
+            elif self.current_state == SystemState.ACTIVE:
+                print(f"🎤 ACTIVE: Listening... (silence count: {silence_count}/{self.config.max_silence_retries})")
+            else:
+                break
+            
+            # Handle conversation turn
+            has_input, user_text = await self._handle_conversation_turn()
+            
+            if has_input:
                 silence_count = 0
                 print(f"📝 User said: '{user_text}'")
                 
-                # Process and respond (dummy response for now)
-                response = f"You said: {user_text.upper()}"
-                print(f"🤖 Responding: '{response}'")
-                
-                # Speak with interrupt support
-                completed = await speak_with_interrupt_support(response)
-                
+                # Use streaming response directly to TTS
+                completed = await self._process_user_input_streaming(user_text)
                 if not completed:
-                    # Speech was interrupted, continue loop in ACTIVE_LISTENING state
                     print("🔄 Continuing conversation after interrupt...")
                     continue
-                
-                # Continue conversation loop normally
-                
             else:
-                # No meaningful input - increment silence count
                 silence_count += 1
-                print(f"🔇 No input detected. Silence count: {silence_count}/{MAX_SILENCE_RETRIES}")
+                print(f"🔇 No input detected. Silence count: {silence_count}/{self.config.max_silence_retries}")
                 
                 if silence_count == 1:
-                    completed = await speak_with_interrupt_support("Where did you go?")
-                    if not completed:
-                        continue
+                    completed = await self.speak_with_interrupt_support("Where did you go?")
                 elif silence_count == 2:
-                    completed = await speak_with_interrupt_support("Still can't hear you...")
-                    if not completed:
-                        continue
-                # On 3rd silence, loop will exit
+                    completed = await self.speak_with_interrupt_support("Still can't hear you...")
+                else:
+                    break
                 
+                if not completed:
+                    continue
+        
+        # Exit conversation
+        if silence_count >= self.config.max_silence_retries:
+            print("🛑 Max silence retries reached. Returning to IDLE.")
+        else:
+            print("🛑 Conversation ended. Returning to IDLE.")
+        
+        await self.transition_to_idle()
+
+    async def start(self):
+        """Start the ELSSA system"""
+        print("🚀 Starting ELSSA system...")
+        await self.transition_to_idle()
+        
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except KeyboardInterrupt:
+            print("\n🛑 Shutting down...")
+            await self.cleanup_resources()
+            print("👋 Goodbye!")
         except Exception as e:
-            print(f"⚠️ Error in conversation loop: {e}")
-            if asr and asr.is_running:
-                await asr.stop_async()
-            silence_count += 1
-    
-    # Exit conversation - return to IDLE
-    if silence_count >= MAX_SILENCE_RETRIES:
-        print("🛑 Max silence retries reached. Returning to IDLE.")
-    else:
-        print("🛑 Conversation ended. Returning to IDLE.")
-    
-    await transition_to_idle()
+            print(f"💥 Unexpected error: {e}")
+            await self.cleanup_resources()
+
 
 async def main():
-    """Main function - khởi tạo hệ thống ở trạng thái IDLE"""
-    print("🚀 Starting ELSSA system...")
-    
-    try:
-        # Start in IDLE state
-        await transition_to_idle()
-        
-        # Keep main task alive
-        while True:
-            await asyncio.sleep(1)
-            
-    except KeyboardInterrupt:
-        print("\n🛑 Shutting down...")
-        
-        # Cleanup based on current state
-        async with state_lock:
-            if asr:
-                await asr.stop_async()
-            if tts:
-                tts.close()
-            if wake_handler:
-                wake_handler.stop()
-        
-        print("👋 Goodbye!")
-    
-    except Exception as e:
-        print(f"💥 Unexpected error: {e}")
-        # Force cleanup
-        try:
-            if asr:
-                await asr.stop_async()
-            if tts:
-                tts.close()
-            if wake_handler:
-                wake_handler.stop()
-        except:
-            pass
+    """Main entry point"""
+    config = ELSSAConfig()
+    system = ELSSASystem(config)
+    await system.start()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -10,9 +10,12 @@ import openwakeword
 from openwakeword.model import Model
 from .audio_manager import AudioManager
 
-import warnings
-# Suppress UserWarning
-warnings.filterwarnings("ignore", category=UserWarning)
+import yaml
+
+config = yaml.safe_load(open("config.yaml"))
+WAKEWORD_MODEL = config["wake_word_model"]
+INTERRUPT_WAKEWORD_MODEL = config["interrupt_wake_word_model"]
+
 
 class WakeWordHandler:
     """
@@ -21,7 +24,7 @@ class WakeWordHandler:
     """
     def __init__(
         self,
-        wakeword_models: List[str] = ["models/openwakeword/alexa_v0.1.tflite"],
+        wakeword_models: List[str] = [WAKEWORD_MODEL],
         sample_rate: int = AudioManager.DEFAULT_SAMPLE_RATE,
         block_size: int = 512,
         threshold: float = 0.9
@@ -124,10 +127,10 @@ class InterruptWakeWordHandler:
     """
     def __init__(
         self,
-        wakeword_models: List[str] = ["models/openwakeword/elssa_v0.1.tflite"],
+        wakeword_models: List[str] = [INTERRUPT_WAKEWORD_MODEL],
         sample_rate: int = AudioManager.DEFAULT_SAMPLE_RATE,
         block_size: int = 128,  # IMPROVED: Even smaller for faster response
-        threshold: float = 0.75  # IMPROVED: Slightly lower for better sensitivity
+        threshold: float = 0.9  # IMPROVED: Slightly lower for better sensitivity
     ):
         self.sample_rate = sample_rate
         self.block_size = block_size

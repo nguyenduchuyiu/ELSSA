@@ -8,25 +8,26 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from typing import List, Optional, Callable
 import threading
 
-from openvoice import se_extractor  # type: ignore
-from openvoice.api import BaseSpeakerTTS, ToneColorConverter  # type: ignore
+from openvoice import se_extractor  
+from openvoice.api import BaseSpeakerTTS, ToneColorConverter  
 
 from .audio_manager import AudioManager
 from .wake_word_handler import InterruptWakeWordHandler
+from .playback_buffer import PlaybackBuffer
+from .streaming_components import StreamingOrchestrator
 
-INTERRUPT_WAKE_WORD_MODEL = ["models/openwakeword/alexa_v0.1.tflite"]
 
 class TextToSpeech:
     """
-    Text-to-Speech engine using OpenVoice, supports text splitting, voice conversion,
-    and direct audio playback. Loads resources lazily in separate background thread.
-    Now supports interrupt detection during playback.
+    Text-to-Speech engine using OpenVoice.
+    Supports both standard and streaming TTS with seamless audio playback.
+    Provides interrupt detection during playback.
     """
     
-    DEFAULT_BASE_DIR = 'openvoice/checkpoints/base_speakers/EN'
-    DEFAULT_CONVERTER_DIR = 'openvoice/checkpoints/converter'
+    DEFAULT_BASE_DIR = 'models/openvoice/checkpoints/base_speakers/EN'
+    DEFAULT_CONVERTER_DIR = 'models/openvoice/checkpoints/converter'
     DEFAULT_REFERENCE_PATH = 'assets/audio/ref_voice.mp3'
-    DEFAULT_OUTPUT_DIR = 'openvoice/outputs'
+    DEFAULT_OUTPUT_DIR = 'models/openvoice/outputs'
     
     def __init__(
         self,
@@ -54,7 +55,7 @@ class TextToSpeech:
         self.executor = ThreadPoolExecutor(max_workers=3)
         self.ready = False
 
-        # Attributes to initialize
+        # TTS model attributes
         self.base_tts = None
         self.converter = None
         self.source_se = None
@@ -68,8 +69,12 @@ class TextToSpeech:
         self._interrupt_handler: Optional[InterruptWakeWordHandler] = None
         self._interrupt_callback: Optional[Callable[[], None]] = None
         self._is_interrupted = threading.Event()
+        
+        # Streaming orchestrator
+        self._streaming_orchestrator = StreamingOrchestrator(self)
 
     def _lazy_init(self):
+        """Initialize TTS models in background thread"""
         try:
             print("🔄 Loading TTS model in background...")
             # Load base TTS model config
@@ -87,11 +92,12 @@ class TextToSpeech:
             self.target_se = self._extract_target_se()
 
             self.ready = True
-            print("✅ TTS model loaded and ready.")
+            print("✅ TTS model loaded successfully")
         except Exception as e:
             print(f"❌ Error initializing TTS: {e}")
 
     def _extract_target_se(self):
+        """Extract target speaker embedding from reference audio"""
         se, _ = se_extractor.get_se(
             str(self.ref_path),
             self.converter,
@@ -124,25 +130,209 @@ class TextToSpeech:
         speed: float,
         emotion: str
     ) -> np.ndarray:
-        tmp = self.output_dir / f'chunk_{idx}.wav'
+        """Generate audio chunk from text"""
         if not self.ready:
             raise RuntimeError("TTS model not loaded yet.")
-        self.base_tts.tts(text_chunk, str(tmp), speaker=speaker, language=language, speed=speed)
+        audio = self.base_tts.tts(text_chunk, speaker=speaker, language=language, speed=speed)
         audio = self.converter.convert(
-            audio_src_path=str(tmp),
+            raw_audio=audio,
             src_se=self.source_se,
             tgt_se=self.target_se,
             message=emotion
         )
         
-        # Debug TTS audio properties
-        print(f"🎵 TTS chunk {idx} - Shape: {audio.shape}, Type: {audio.dtype}, Range: {audio.min():.6f} to {audio.max():.6f}")
-        
+        # Apply fade
         faded_audio = self.audio_manager.apply_fade(audio, self.fade_ms)
         
-        print(f"🎵 TTS chunk {idx} after fade - Range: {faded_audio.min():.6f} to {faded_audio.max():.6f}")
+        # Debug info
+        print(f"🎵 Generated chunk {idx}: {len(faded_audio)} samples at 22050 Hz")
         
         return faded_audio
+    
+    async def _generate_audio_chunk_async(self, text: str, idx: int, speaker: str, language: str, speed: float, emotion: str) -> np.ndarray:
+        """Async wrapper for audio chunk generation"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self.executor,
+            self._generate_chunk,
+            text, idx, speaker, language, speed, emotion
+        )
+
+    def _apply_smooth_transition(self, audio_chunk: np.ndarray) -> np.ndarray:
+        """Apply smooth transition for seamless audio chunk connection"""
+        # Apply gentle fade-in to reduce potential clicks between chunks
+        fade_samples = int(0.005 * 22050)  # 5ms fade at TTS sample rate
+        if len(audio_chunk) > fade_samples:
+            fade_curve = np.linspace(0.0, 1.0, fade_samples)
+            audio_chunk[:fade_samples] *= fade_curve
+        return audio_chunk
+    
+    # ========== Interrupt Handling ==========
+    
+    async def _setup_interrupt_monitoring(self, interrupt_callback: Optional[Callable[[], None]]) -> None:
+        """Setup interrupt wake word monitoring during TTS"""
+        try:
+            self._interrupt_callback = interrupt_callback
+            self._is_interrupted.clear()
+            
+            # Clean up existing handler first
+            if self._interrupt_handler is not None:
+                try:
+                    if self._interrupt_handler.is_monitoring():
+                        self._interrupt_handler.stop_interrupt_monitoring()
+                except:
+                    pass
+            
+            # Create new interrupt handler for this session
+            self._interrupt_handler = InterruptWakeWordHandler()
+            self._interrupt_handler.set_interrupt_callback(self._on_interrupt_detected)
+            self._interrupt_handler.start_interrupt_monitoring()
+            print("✅ Interrupt monitoring setup completed")
+            
+        except Exception as e:
+            print(f"⚠️ Error setting up interrupt monitoring: {e}")
+    
+    async def _cleanup_interrupt_monitoring(self) -> None:
+        """Cleanup interrupt monitoring"""
+        try:
+            if self._interrupt_handler and self._interrupt_handler.is_monitoring():
+                print("🧹 Cleaning up interrupt monitoring...")
+                self._interrupt_handler.stop_interrupt_monitoring()
+                print("✅ Interrupt monitoring cleaned up successfully")
+            
+            self._interrupt_handler = None
+            self._interrupt_callback = None
+            self._is_interrupted.clear()
+            
+        except Exception as e:
+            print(f"⚠️ Error cleaning up interrupt monitoring: {e}")
+            self._interrupt_handler = None
+            self._interrupt_callback = None
+    
+    def _on_interrupt_detected(self) -> None:
+        """Called when wake word detected during TTS"""
+        print("⚡ TTS INTERRUPT DETECTED - STOPPING IMMEDIATELY!")
+        self._is_interrupted.set()
+        
+        # Stop current audio playback immediately
+        self.audio_manager.stop_playback(fade_out_ms=50)
+        
+        # Call user-provided interrupt callback
+        if self._interrupt_callback:
+            try:
+                self._interrupt_callback()
+                print("✅ User interrupt callback executed")
+            except Exception as e:
+                print(f"⚠️ Error in user interrupt callback: {e}")
+        
+        print("🚨 AUDIO STOPPED - Interrupt complete")
+
+    # ========== Public API Methods ==========
+
+    async def speak_stream_async(
+        self,
+        text_stream,
+        speaker: str = 'default',
+        language: str = 'English',
+        speed: float = 1.0,
+        emotion: str = '@MyShell',
+        interruptible: bool = False,
+        interrupt_callback: Optional[Callable[[], None]] = None
+    ) -> dict:
+        """
+        Stream text chunks to TTS with continuous playback buffer to eliminate gaps.
+        Uses 3-component architecture: Producer, Feeder, and Continuous Player.
+        
+        Args:
+            text_stream: Iterator/generator that yields text chunks
+            speaker: Speaker voice to use
+            language: Language for synthesis
+            speed: Speech rate multiplier
+            emotion: Emotion style for voice
+            interruptible: Whether this speech can be interrupted by wake word
+            interrupt_callback: Callback to call if interrupted
+            
+        Returns:
+            Dict with 'completed': bool, 'interrupted': bool, 'text': str
+        """
+        print(f"🎯 TTS speak_stream_async started - Interruptible: {interruptible}")
+        
+        result = {
+            'completed': False,
+            'interrupted': False,
+            'text': '',
+            'audio': np.array([], dtype=np.float32)
+        }
+        
+        # Ensure TTS is ready
+        if not self.ready and self._load_thread.is_alive():
+            print("🕐 Waiting for TTS to load...")
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._load_thread.join)
+            
+        if not self.ready:
+            print("❌ TTS not ready")
+            return result
+
+        # Setup interrupt monitoring if requested
+        if interruptible:
+            print("🎯 Setting up interrupt monitoring for streaming...")
+            await self._setup_interrupt_monitoring(interrupt_callback)
+
+        # Initialize playback buffer
+        playback_buffer = PlaybackBuffer(sample_rate=22050, buffer_duration=60)
+        
+        # Get audio device configuration
+        import yaml
+        try:
+            with open('config.yaml', 'r') as f:
+                config = yaml.safe_load(f)
+            output_device = config.get('output_device', None)
+        except:
+            output_device = None
+
+        try:
+            print("🎤 Starting 3-component streaming architecture...")
+            
+            # Start continuous player immediately
+            print("🎵 Starting Continuous Player")
+            playback_buffer.start_playback(
+                device=output_device,
+                channels=1,
+                blocksize=512
+            )
+            
+            # Use orchestrator to coordinate streaming
+            success = await self._streaming_orchestrator.coordinate_streaming(
+                text_stream=text_stream,
+                playback_buffer=playback_buffer,
+                result=result,
+                interruptible=interruptible,
+                speaker=speaker,
+                language=language,
+                speed=speed,
+                emotion=emotion
+            )
+            
+            if success and not result['interrupted']:
+                result['completed'] = True
+                print("✅ All audio played successfully")
+
+        except Exception as e:
+            print(f"\n⚠️ Error in speak_stream_async: {e}")
+            result['interrupted'] = True
+            
+        finally:
+            # Cleanup
+            print("🧹 Cleaning up streaming components...")
+            playback_buffer.stop_playback()
+            
+            if interruptible:
+                print("🧹 Cleaning up interrupt monitoring...")
+                await self._cleanup_interrupt_monitoring()
+
+        print(f"🎯 TTS speak_stream_async returning - Completed: {result['completed']}, Interrupted: {result['interrupted']}")
+        return result
 
     async def speak_async(
         self,
@@ -156,7 +346,7 @@ class TextToSpeech:
         interrupt_callback: Optional[Callable[[], None]] = None
     ) -> dict:
         """
-        Async version of speak. Convert text to speech and optionally play it.
+        Standard TTS synthesis. Convert text to speech and optionally play it.
         
         Args:
             text: Text to synthesize
@@ -179,17 +369,15 @@ class TextToSpeech:
             'audio': np.array([], dtype=np.float32)
         }
         
-        # Ensure load thread has opportunity to run early
+        # Ensure TTS is ready
         if not self.ready and self._load_thread.is_alive():
-            print("🕐 Waiting briefly for TTS to load...")
-            # Run thread join in executor to avoid blocking event loop
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, lambda: self._load_thread.join(timeout=1.0))
-        if not self.ready:
-            # If still not ready, block fully
-            print("🕐 Blocking until TTS ready...")
+            print("🕐 Waiting for TTS to load...")
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._load_thread.join)
+            
+        if not self.ready:
+            print("❌ TTS not ready")
+            return result
             
         chunks = self._split_text(text)
         if not chunks:
@@ -199,13 +387,13 @@ class TextToSpeech:
 
         print(f"🎯 TTS processing {len(chunks)} chunks")
 
-        # Setup interrupt monitoring if requested (setup EARLY before synthesis)
+        # Setup interrupt monitoring if requested
         if interruptible:
             print("🎯 Setting up interrupt monitoring...")
             await self._setup_interrupt_monitoring(interrupt_callback)
 
         try:
-            # SOLUTION 1: Generate ALL chunks in parallel first
+            # Generate all chunks in parallel
             loop = asyncio.get_event_loop()
             futures: List[asyncio.Future] = []
             for i, chunk_text in enumerate(chunks):
@@ -215,13 +403,11 @@ class TextToSpeech:
                 )
                 futures.append(future)
 
-            # Wait for ALL chunks to complete in parallel
             print(f"🎯 Generating all {len(futures)} chunks in parallel...")
             chunk_audios = await asyncio.gather(*futures)
             
-            # SOLUTION 2: Concatenate all chunks into one continuous audio stream
+            # Concatenate all chunks into one continuous audio stream
             if chunk_audios:
-                # Apply smooth transitions between chunks
                 combined_audio_parts = []
                 for i, audio in enumerate(chunk_audios):
                     if i == 0:
@@ -231,14 +417,13 @@ class TextToSpeech:
                         # Last chunk: apply fade-out only  
                         combined_audio_parts.append(self.audio_manager.apply_fade_out(audio, fade_ms=100))
                     else:
-                        # Middle chunks: no additional fading (already has basic fade from _generate_chunk)
+                        # Middle chunks: no additional fading
                         combined_audio_parts.append(audio)
                 
-                # Concatenate all chunks into one continuous stream
                 combined_audio = np.concatenate(combined_audio_parts)
                 result['audio'] = combined_audio
                                 
-                # SOLUTION 3: Play as ONE continuous audio stream (no gaps between chunks)
+                # Play as one continuous audio stream
                 if play_audio:
                     print(f"🎯 Playing continuous audio stream...")
                     completed = await self.audio_manager.play_audio_async(
@@ -248,14 +433,12 @@ class TextToSpeech:
                     )
                     
                     if not completed:
-                        # Interrupted during playback
                         print("🔄 TTS interrupted during continuous playback")
                         result['interrupted'] = True
                     else:
                         print("✅ Continuous audio playback completed successfully")
                         result['completed'] = True
                 else:
-                    # Not playing, just return audio
                     result['completed'] = True
             else:
                 print("⚠️ No audio chunks generated")
@@ -266,133 +449,13 @@ class TextToSpeech:
             result['interrupted'] = True
             
         finally:
-            # Always cleanup interrupt monitoring
+            # Cleanup interrupt monitoring
             if interruptible:
                 print("🎯 Cleaning up interrupt monitoring...")
                 await self._cleanup_interrupt_monitoring()
 
         print(f"🎯 TTS speak_async returning - Completed: {result['completed']}, Interrupted: {result['interrupted']}")
         return result
-    
-    async def _setup_interrupt_monitoring(self, interrupt_callback: Optional[Callable[[], None]]) -> None:
-        """IMPROVED: Setup interrupt wake word monitoring during TTS - can be called multiple times"""
-        try:
-            self._interrupt_callback = interrupt_callback
-            self._is_interrupted.clear()
-            
-            # FIXED: Always create fresh interrupt handler for reliable detection
-            # This ensures clean state for each TTS session
-            if self._interrupt_handler is not None:
-                # Clean up existing handler first
-                try:
-                    if self._interrupt_handler.is_monitoring():
-                        self._interrupt_handler.stop_interrupt_monitoring()
-                except:
-                    pass
-            
-            # Create new interrupt handler for this session
-            self._interrupt_handler = InterruptWakeWordHandler(
-                wakeword_models=INTERRUPT_WAKE_WORD_MODEL
-            )
-            
-            # Set interrupt callback
-            self._interrupt_handler.set_interrupt_callback(self._on_interrupt_detected)
-            
-            # Start monitoring
-            self._interrupt_handler.start_interrupt_monitoring()
-            print("✅ Interrupt monitoring setup completed")
-            
-        except Exception as e:
-            print(f"⚠️ Error setting up interrupt monitoring: {e}")
-    
-    async def _cleanup_interrupt_monitoring(self) -> None:
-        """IMPROVED: Cleanup interrupt monitoring - ensures clean state for next session"""
-        try:
-            if self._interrupt_handler and self._interrupt_handler.is_monitoring():
-                print("🧹 Cleaning up interrupt monitoring...")
-                self._interrupt_handler.stop_interrupt_monitoring()
-                print("✅ Interrupt monitoring cleaned up successfully")
-            
-            # FIXED: Reset interrupt handler reference to None for clean state
-            # This ensures fresh setup for next TTS session
-            self._interrupt_handler = None
-            self._interrupt_callback = None
-            self._is_interrupted.clear()
-            
-        except Exception as e:
-            print(f"⚠️ Error cleaning up interrupt monitoring: {e}")
-            # Force cleanup even on error
-            self._interrupt_handler = None
-            self._interrupt_callback = None
-    
-    def _on_interrupt_detected(self) -> None:
-        """IMPROVED: Called when wake word detected during TTS - provides immediate audio stop"""
-        print("⚡ TTS INTERRUPT DETECTED - STOPPING IMMEDIATELY!")
-        self._is_interrupted.set()
-        
-        # CRITICAL: Stop current audio playback IMMEDIATELY with minimal fade
-        self.audio_manager.stop_playback(fade_out_ms=50)  # Very quick fade to avoid clicks
-        
-        # Call user-provided interrupt callback
-        if self._interrupt_callback:
-            try:
-                self._interrupt_callback()
-                print("✅ User interrupt callback executed")
-            except Exception as e:
-                print(f"⚠️ Error in user interrupt callback: {e}")
-        
-        print("🚨 AUDIO STOPPED - Interrupt complete")
-
-    def speak(
-        self,
-        text: str,
-        speaker: str = 'default',
-        language: str = 'English',
-        speed: float = 1.0,
-        emotion: str = '@MyShell',
-        play_audio: bool = True
-    ) -> np.ndarray:
-        """
-        Convert text to speech and optionally play it
-        
-        Args:
-            text: Text to synthesize
-            speaker: Speaker voice to use
-            language: Language for synthesis
-            speed: Speech rate multiplier
-            emotion: Emotion style for voice
-            play_audio: Whether to play audio immediately
-            
-        Returns:
-            Audio data as numpy array
-        """
-        # Ensure load thread has opportunity to run early
-        if not self.ready and self._load_thread.is_alive():
-            print("🕐 Waiting briefly for TTS to load...")
-            self._load_thread.join(timeout=0)
-        if not self.ready:
-            # If still not ready, block fully
-            print("🕐 Blocking until TTS ready...")
-            self._load_thread.join()
-            
-        chunks = self._split_text(text)
-        if not chunks:
-            return np.array([], dtype=np.float32)
-
-        futures: List[Future] = []
-        for i, chunk_text in enumerate(chunks):
-            futures.append(self.executor.submit(
-                self._generate_chunk, chunk_text, i, speaker, language, speed, emotion
-            ))
-
-        combined_audio = []
-        for fut in futures:
-            audio = fut.result()
-            combined_audio.append(audio)
-            if play_audio:
-                self.audio_manager.play_audio(audio)
-
-        return np.concatenate(combined_audio)
 
     def close(self):
         """Clean up resources"""

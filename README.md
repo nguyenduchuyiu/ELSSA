@@ -23,29 +23,36 @@ Install all required Python packages from `requirements.txt`:
 uv pip install -r requirements.txt
 ```
 
-### 3. Install OpenVoice
-
-Clone the OpenVoice repository and install it in editable mode:
-
-```bash
-git clone git@github.com:myshell-ai/OpenVoice.git openvoice
-cd openvoice
-uv pip install -e .
-```
-
-### 4. Download and Extract Checkpoints
+### 3. Download OpenVoice Checkpoints
 
 Download the sample checkpoint for OpenVoice:
 
 ```bash
-wget https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_1226.zip
-unzip checkpoints_1226.zip
+wget https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_1226.zip libs/openvoice
+unzip checkpoints_1226.zip -d libs/openvoice
+```
+
+### 4. Choose a LLM
+
+#### 4.1. Phi-2
+
+```bash
+# Manually download the model and run with local path
+huggingface-cli download TheBloke/phi-2-GGUF --local-dir models/phi-2
+```
+
+#### 4.2. Llama-3.2-3B-Instruct
+
+```bash
+wget https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-IQ3_M.gguf -P models/Llama-3.2-3B-Instruct/
 ```
 
 ## Notes
 
 - Make sure you have [uv](https://github.com/astral-sh/uv) and Python 3.10.12 installed on your system.
+
 - If you encounter permission issues when cloning OpenVoice, check your SSH keys or use HTTPS instead of SSH.
+
 ---
 
 Happy installing and enjoy using E.L.S.S.A!

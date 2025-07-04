@@ -1,32 +1,19 @@
-import sounddevice as sd
+import time
+from src.layer_2_agentic_reasoning.llm_runner import LLMRunner
 
-def check_supported_sample_rates():
-    rates_to_test = [8000, 16000, 22050, 32000, 44100, 48000, 96000]
-    devices = sd.query_devices()
-    
-    for idx, device in enumerate(devices):
-        name = device['name']
-        max_input_channels = device['max_input_channels']
-        max_output_channels = device['max_output_channels']
-        print(f"\n🔍 Device {idx}: {name}")
-        
-        if max_input_channels > 0:
-            print("  🎙 Supported input sample rates:")
-            for rate in rates_to_test:
-                try:
-                    sd.check_input_settings(device=idx, samplerate=rate)
-                    print(f"    ✅ {rate} Hz")
-                except:
-                    print(f"    ❌ {rate} Hz")
-        
-        if max_output_channels > 0:
-            print("  🔊 Supported output sample rates:")
-            for rate in rates_to_test:
-                try:
-                    sd.check_output_settings(device=idx, samplerate=rate)
-                    print(f"    ✅ {rate} Hz")
-                except:
-                    print(f"    ❌ {rate} Hz")
+prompt = [
+    {"role": "System", "content": "You are a helpful assistant named ELSSA."},
+    {"role": "User", "content": "I've created you to help me with my tasks."},
+    {"role": "Assistant", "content": "I'm ELSSA, your helpful assistant. How can I assist you today?"},
+    {"role": "User", "content": "What is the capital of Vietnam?"},
+    {"role": "Assistant", "content": "That's an easy one, but I'd be happy to confirm. The capital of Vietnam is Hanoi!"},
+    {"role": "User", "content": "Good, I'm going to ask you a few more questions. Tell me a fun fact about Hanoi."},
+]
 
-if __name__ == "__main__":
-    check_supported_sample_rates()
+runner = LLMRunner()
+runner.launch()
+time.sleep(5)
+for chunk in runner.chat(prompt):
+    print(chunk, end="", flush=True)
+
+runner.stop_server()
