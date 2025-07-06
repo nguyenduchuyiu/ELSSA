@@ -1,3 +1,6 @@
+import sys
+import os
+
 import torch
 import json
 import numpy as np
@@ -15,6 +18,11 @@ from .audio_manager import AudioManager
 from .wake_word_handler import InterruptWakeWordHandler
 from .playback_buffer import PlaybackBuffer
 from .streaming_components import StreamingOrchestrator
+
+import yaml
+
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
 
 
 class TextToSpeech:
@@ -280,13 +288,10 @@ class TextToSpeech:
             await self._setup_interrupt_monitoring(interrupt_callback)
 
         # Initialize playback buffer
-        playback_buffer = PlaybackBuffer(sample_rate=22050, buffer_duration=60)
+        playback_buffer = PlaybackBuffer(sample_rate=22050, buffer_duration=config.get('tts_buffer_duration', 5))
         
         # Get audio device configuration
-        import yaml
         try:
-            with open('config.yaml', 'r') as f:
-                config = yaml.safe_load(f)
             output_device = config.get('output_device', None)
         except:
             output_device = None
@@ -302,30 +307,47 @@ class TextToSpeech:
                 blocksize=512
             )
             
+            # Verify playback started successfully
+            if not playback_buffer._is_playing:
+                print("❌ Failed to start playback stream")
+                result['interrupted'] = True
+                return result
+            
             # Use orchestrator to coordinate streaming
+            print("🏗️ Starting streaming orchestration...")
             success = await self._streaming_orchestrator.coordinate_streaming(
                 text_stream=text_stream,
                 playback_buffer=playback_buffer,
                 result=result,
-                interruptible=interruptible,
                 speaker=speaker,
                 language=language,
                 speed=speed,
                 emotion=emotion
             )
             
+            print(f"🏗️ Streaming orchestration completed - Success: {success}")
+            
             if success and not result['interrupted']:
                 result['completed'] = True
                 print("✅ All audio played successfully")
+            else:
+                print(f"⚠️ Streaming incomplete - Success: {success}, Interrupted: {result['interrupted']}")
 
         except Exception as e:
             print(f"\n⚠️ Error in speak_stream_async: {e}")
+            import traceback
+            traceback.print_exc()
             result['interrupted'] = True
             
         finally:
             # Cleanup
             print("🧹 Cleaning up streaming components...")
-            playback_buffer.stop_playback()
+            
+            # Enhanced PlaybackBuffer cleanup
+            try:
+                playback_buffer.cleanup()
+            except Exception as e:
+                print(f"⚠️ Error cleaning playback buffer: {e}")
             
             if interruptible:
                 print("🧹 Cleaning up interrupt monitoring...")
@@ -458,8 +480,56 @@ class TextToSpeech:
         return result
 
     def close(self):
-        """Clean up resources"""
+        """Clean up resources with enhanced memory management"""
+        print("🧹 Starting enhanced TTS cleanup...")
+        
+        # Shutdown executor first
         self.executor.shutdown(wait=True)
+        
+        # Wait for load thread to complete
         if self._load_thread.is_alive():
             self._load_thread.join()
+        
+        # Enhanced model cleanup
+        try:
+            # Clear PyTorch model references
+            if self.base_tts is not None:
+                del self.base_tts
+                self.base_tts = None
+                
+            if self.converter is not None:
+                del self.converter  
+                self.converter = None
+                
+            if self.source_se is not None:
+                del self.source_se
+                self.source_se = None
+                
+            if self.target_se is not None:
+                del self.target_se
+                self.target_se = None
+            
+            # Force GPU memory cleanup
+            if 'cuda' in str(self.device):
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    print("🎮 TTS GPU memory cleared")
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            print("✅ Enhanced TTS model cleanup completed")
+            
+        except Exception as e:
+            print(f"⚠️ Error in TTS model cleanup: {e}")
+        
+        # Close audio manager last
         self.audio_manager.close()
+        
+        # Mark as not ready
+        self.ready = False
+        
+        print("✅ TTS cleanup fully completed")
