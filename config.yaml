@@ -1,4 +1,5 @@
-# ELSSA System Configuration
+# ELSSA System Configuration - Optimized for Memory Efficiency
+# Based on performance testing results from 2025-07-05
 
 # Audio Settings
 sample_rate: 16000
@@ -9,19 +10,26 @@ output_device: null  # null = default output device, or specify device ID/name
 wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 interrupt_wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 
-# Session Management
-silence_timeout: 3.0  # seconds before considering silence
+# Session Management - Optimized Timings
+silence_timeout: 2  
+max_silence_retries: 3
 
-# TTS Settings
-tts_speed: 1.0
-tts_emotion: "@MyShell"
+# ASR Settings - Memory Optimized
+asr_timeout: 30      # REDUCED from 60s: Faster timeout
+chunk_duration: 3.0  # ✅ OPTIMAL: Best for Whisper accuracy  
+overlap_duration: 0.5 # ✅ OPTIMAL: Good context overlap
 
-# ASR Settings  
-asr_timeout: 60  # timeout for ASR session
-
-# System Behavior
-max_silence_retries: 3  # number of silence attempts before returning to idle
+# TTS Settings - Major Memory Optimization  
+speed: 1.0
+emotion: "@MyShell"
+# TTS Playback Buffer - CRITICAL OPTIMIZATION
+tts_buffer_duration: 20  # INCREASED from 10s to handle larger chunks
+tts_timeout_buffer_wait: 30  # INCREASED from 10s to prevent timeout
 
 # LLM Settings
 model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-IQ3_M.gguf"
-n_ctx: 16384
+n_ctx: 16384 
+temperature: 0.7
+max_tokens: 512
+stop: ["<|user|>", "<|assistant|>", "< Mayer|>", "<3", "<_assistant_|>", "<_user_|>"]
+n_gpu_layers: 26
