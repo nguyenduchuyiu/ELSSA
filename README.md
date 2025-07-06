@@ -28,8 +28,15 @@ uv pip install -r requirements.txt
 Download the sample checkpoint for OpenVoice:
 
 ```bash
-wget https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_1226.zip libs/openvoice
-unzip checkpoints_1226.zip -d libs/openvoice
+mkdir -p libs/openvoice
+
+wget -O libs/openvoice/checkpoints_1226.zip \
+  https://myshell-public-repo-host.s3.amazonaws.com/openvoice/checkpoints_1226.zip
+
+unzip libs/openvoice/checkpoints_1226.zip -d libs/openvoice
+
+rm libs/openvoice/checkpoints_1226.zip
+
 ```
 
 ### 4. Choose a LLM
