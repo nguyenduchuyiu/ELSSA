@@ -343,7 +343,8 @@ class SpeechToText:
 
     def stop(self) -> str:
         """
-        Stops ASR service and returns all recognized text concatenated
+        Stops ASR service and returns all recognized text concatenated.
+        Keeps model weights in memory, only stops detection threads.
         
         Returns:
             All recognized text joined as a single string, filtered
@@ -354,23 +355,45 @@ class SpeechToText:
         print("\n❌ Stopping SpeechToText...")
         self.stop_event.set()
         
+        # Get final text before cleanup
+        with self._all_text_lock:
+            final_text = " ".join(self._all_text).strip()
+            final_cleaned = self._filter_whisper_noise(final_text)
+        
+        # Stop threads
         if self._recorder_thread.is_alive():
             self._recorder_thread.join()
         if self._worker_thread.is_alive():
             self._worker_thread.join()
             
+        # Close audio stream
         self.audio_manager.close()
-        self.is_running = False
-        print("✅ SpeechToText stopped")
         
-        # Return the concatenated and filtered text
+        # Clear buffers (but keep ASR model in memory)
+        with self.buffer_lock:
+            self.audio_buffer.clear()
+        
+        # Clear queue
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except:
+                break
+        
+        # Clear text storage
         with self._all_text_lock:
-            final_text = " ".join(self._all_text).strip()
-            return self._filter_whisper_noise(final_text)
+            self._all_text.clear()
+        
+        self.is_running = False
+        print("✅ SpeechToText stopped (model weights preserved)")
+        
+        # Return the saved final text
+        return final_cleaned
 
     async def stop_async(self) -> str:
         """
         Async version of stop. Stops ASR service and returns all recognized text.
+        Keeps model weights in memory, only stops detection threads.
         
         Returns:
             All recognized text joined as a single string, filtered
@@ -381,22 +404,43 @@ class SpeechToText:
         print("\n❌ Stopping SpeechToText...")
         self.stop_event.set()
         
+        # Get final text before cleanup
+        with self._all_text_lock:
+            final_text = " ".join(self._all_text).strip()
+            final_cleaned = self._filter_whisper_noise(final_text)
+        
         # Run thread joins in executor to avoid blocking event loop
         loop = asyncio.get_event_loop()
         
+        # Stop threads
         if self._recorder_thread.is_alive():
             await loop.run_in_executor(None, self._recorder_thread.join)
         if self._worker_thread.is_alive():
             await loop.run_in_executor(None, self._worker_thread.join)
-            
-        self.audio_manager.close()
-        self.is_running = False
-        print("✅ SpeechToText stopped")
         
-        # Return the concatenated and filtered text
+        # Close audio stream
+        self.audio_manager.close()
+        
+        # Clear buffers (but keep ASR model in memory)
+        with self.buffer_lock:
+            self.audio_buffer.clear()
+        
+        # Clear queue
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except:
+                break
+        
+        # Clear text storage
         with self._all_text_lock:
-            final_text = " ".join(self._all_text).strip()
-            return self._filter_whisper_noise(final_text)
+            self._all_text.clear()
+        
+        self.is_running = False
+        print("✅ SpeechToText stopped (model weights preserved)")
+        
+        # Return the saved final text
+        return final_cleaned
             
     def transcribe_file(self, audio_file_path: str) -> str:
         """

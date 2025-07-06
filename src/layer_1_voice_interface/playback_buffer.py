@@ -7,6 +7,10 @@ import numpy as np
 import threading
 import sounddevice as sd
 from typing import Optional
+import yaml
+
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
 
 
 class PlaybackBuffer:
@@ -15,7 +19,7 @@ class PlaybackBuffer:
     Uses a circular buffer with thread-safe operations to eliminate gaps between chunks.
     """
     
-    def __init__(self, sample_rate: int = 22050, buffer_duration: float = 60):
+    def __init__(self, sample_rate: int = 22050, buffer_duration: float = 5):
         self.sample_rate = sample_rate
         self.buffer_size = int(sample_rate * buffer_duration)  # buffer duration in samples
         
@@ -53,7 +57,7 @@ class PlaybackBuffer:
                 def has_space():
                     return (self.buffer_size - self._available_samples) >= chunk_size or self._interrupted
                 
-                if not self._condition.wait_for(has_space, timeout=5.0):
+                if not self._condition.wait_for(has_space, timeout=config.get('tts_timeout_buffer_wait', 10)):
                     print(f"❌ Timeout waiting for buffer space")
                     return False
                 
@@ -190,24 +194,11 @@ class PlaybackBuffer:
             self._condition.notify_all()
             print("⚡ Playback buffer interrupted")
     
-    def is_interrupted(self) -> bool:
-        """Check if playback has been interrupted."""
-        with self._lock:
-            return self._interrupted
-    
     def mark_finished(self):
         """Mark that no more audio will be written to buffer."""
         with self._condition:
             self._finished = True
             self._condition.notify_all()
-    
-    def wait_until_empty(self, timeout: Optional[float] = None) -> bool:
-        """Wait until buffer is empty (all audio played)."""
-        with self._condition:
-            return self._condition.wait_for(
-                lambda: self._available_samples == 0, 
-                timeout=timeout
-            )
     
     def get_buffer_status(self) -> dict:
         """Get current buffer status for monitoring."""
@@ -218,4 +209,39 @@ class PlaybackBuffer:
                 'is_playing': self._is_playing,
                 'finished': self._finished,
                 'interrupted': self._interrupted
-            } 
+            }
+    
+    def cleanup(self):
+        """Enhanced cleanup to free large audio buffer and reset state"""
+        print("🧹 PlaybackBuffer cleanup starting...")
+        
+        # Stop playback stream first
+        self.stop_playback()
+        
+        # Clear the large circular buffer
+        with self._lock:
+            if hasattr(self, '_buffer') and self._buffer is not None:
+                buffer_size_mb = self._buffer.nbytes / (1024 * 1024)
+                print(f"🧹 Freeing circular buffer: {buffer_size_mb:.2f}MB")
+                del self._buffer
+                self._buffer = None
+            
+            # Reset buffer state
+            self._write_pos = 0
+            self._read_pos = 0
+            self._available_samples = 0
+            self._finished = False
+            self._interrupted = False
+            
+            # Notify any waiting threads
+            self._condition.notify_all()
+        
+        print("✅ PlaybackBuffer cleanup completed")
+    
+    def __del__(self):
+        """Destructor to ensure cleanup"""
+        try:
+            if hasattr(self, '_buffer') and self._buffer is not None:
+                self.cleanup()
+        except:
+            pass 
