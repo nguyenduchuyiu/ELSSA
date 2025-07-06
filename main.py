@@ -5,6 +5,11 @@ import yaml
 from enum import Enum
 from scipy.io.wavfile import read
 from typing import Optional, Callable
+import sys
+import os
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "libs")))
+
 
 from src.layer_1_voice_interface.wake_word_handler import WakeWordHandler
 from src.layer_1_voice_interface.speech_to_text import SpeechToText
@@ -345,6 +350,9 @@ class ELSSASystem:
             
             # Handle conversation turn
             has_input, user_text = await self._handle_conversation_turn()
+            # FIXME: this is for testing, remove it later
+            has_input = True
+            user_text = "Explain photon synthesis."
             
             if has_input:
                 silence_count = 0

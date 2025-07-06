@@ -94,7 +94,7 @@ class ContextManager:
             # Add system message
             system_msg = ChatMessage(
                 role="system",
-                content="You are a helpful assistant named ELSSA.",
+                content="You are a helpful assistant named ELSSA. Answer concisely and to the point.",
                 timestamp=self._get_current_timestamp(),
                 session_id=session_id
             )
