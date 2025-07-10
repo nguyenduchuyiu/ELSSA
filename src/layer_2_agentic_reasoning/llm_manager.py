@@ -12,14 +12,12 @@ class LLMManager:
 
     def load(self):
         if self.llm is None:
-            print("🧠 [LLM] Loading into memory...")
             self.llm = Llama(model_path=self.model_path, **self.kwargs)
         else:
             print("✅ [LLM] Already loaded")
 
     def unload(self):
         if self.llm is not None:
-            print("💤 [LLM] Unloading from memory...")
             self.llm = None
 
     def get(self):
@@ -28,7 +26,6 @@ class LLMManager:
         return self.llm
 
     def interrupt(self):
-        print("🛑 [LLM] Interrupt requested")
         self._stop_generation = True
 
     def should_interrupt(self):

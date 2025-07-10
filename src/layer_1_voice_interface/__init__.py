@@ -7,12 +7,13 @@ as well as wake word detection for hands-free operation.
 
 from .audio_manager import AudioManager
 from .speech_to_text import SpeechToText
-from .text_to_speech import TextToSpeech
+from .text_to_speech import OpenVoiceTTS, CoquiTTS
 from .wake_word_handler import WakeWordHandler
 
 __all__ = [
     'AudioManager',
     'SpeechToText',
-    'TextToSpeech',
+    'OpenVoiceTTS',
+    'CoquiTTS',
     'WakeWordHandler',
 ]

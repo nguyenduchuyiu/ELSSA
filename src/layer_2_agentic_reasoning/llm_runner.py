@@ -51,7 +51,6 @@ class LLMRunner:
             self.proc = None
 
     def load_model(self):
-        print("📦 Loading LLM...")
         r = requests.post(f"http://localhost:{self.port}/load")
         if r.status_code == 200:
             self.llm_loaded = True
@@ -60,7 +59,6 @@ class LLMRunner:
             print("❌ LLM load failed")
 
     def unload_model(self):
-        print("🧹 Unloading LLM...")
         r = requests.post(f"http://localhost:{self.port}/unload")
         if r.status_code == 200:
             self.llm_loaded = False
@@ -87,7 +85,7 @@ class LLMRunner:
                 
                 # Buffer to accumulate text until sentence ending
                 buffer = ""
-                sentence_endings = {'.', '!', '?', '\n'}
+                sentence_endings = {'.', '!', '?', '\n', '...'}
                 
                 for chunk in response.iter_content(decode_unicode=True, chunk_size=20):
                     if chunk:

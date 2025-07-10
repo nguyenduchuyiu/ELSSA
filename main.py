@@ -1,22 +1,27 @@
-import numpy as np
 import asyncio
 import gc
 import yaml
 from enum import Enum
-from scipy.io.wavfile import read
-from typing import Optional, Callable
+from typing import Optional
 import sys
 import os
+import yaml 
+
+config = yaml.safe_load(open("config.yaml", "r"))
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "libs")))
-
+ 
 
 from src.layer_1_voice_interface.wake_word_handler import WakeWordHandler
 from src.layer_1_voice_interface.speech_to_text import SpeechToText
-from src.layer_1_voice_interface.text_to_speech import TextToSpeech
 from src.layer_2_agentic_reasoning.llm_runner import LLMRunner
 from src.layer_2_agentic_reasoning.context_manager import ContextManager
+from src.utils.sound_player import play_wake_chime
 
+if config['tts_engine'] == "openvoice":
+    from src.layer_1_voice_interface.text_to_speech import OpenVoiceTTS as TextToSpeech
+else:
+    from src.layer_1_voice_interface.text_to_speech import CoquiTTS as TextToSpeech
 
 class SystemState(Enum):
     IDLE = "idle"
@@ -34,10 +39,10 @@ class ELSSAConfig:
         
         self.wake_audio_path = "assets/audio/elssa_online.wav"
         self.silence_timeout = self.config['silence_timeout']
-        self.asr_timeout = 60
-        self.max_silence_retries = 3
+        self.asr_timeout = self.config['asr_timeout']
+        self.max_silence_retries = self.config['max_silence_retries']
         self.context_dir = "data/context"
-        self.max_context_length = 10
+        self.max_context_length = self.config['max_context_length']
 
 
 class ELSSASystem:
@@ -109,7 +114,6 @@ class ELSSASystem:
                 print(f"⚠️ Error ending context session: {e}")
         
         gc.collect()
-        print("🗑️ Memory cleaned")
     
     async def transition_to_idle(self):
         """Transition to IDLE state"""
@@ -155,14 +159,13 @@ class ELSSASystem:
             print(f"📝 Started conversation session: {session_id}")
                 
             # Play wake acknowledgment
-            await self._play_wake_audio()
+            play_wake_chime()
     
     async def transition_to_speaking(self):
         """Transition to SPEAKING state"""
         async with self.state_lock:
             print("🔄 Transitioning to SPEAKING state...")
             self.current_state = SystemState.SPEAKING
-            print("🗣️ SPEAKING: Now speaking, can be interrupted")
 
     async def transition_to_active_listening(self):
         """Transition to ACTIVE_LISTENING state"""
@@ -170,15 +173,6 @@ class ELSSASystem:
             print("🔄 Transitioning to ACTIVE_LISTENING state...")
             self.current_state = SystemState.ACTIVE_LISTENING
             print("👂 ACTIVE_LISTENING: Ready to listen immediately after interrupt")
-    
-    async def _play_wake_audio(self):
-        """Play wake acknowledgment audio"""
-        try:
-            sr, wav = read(self.config.wake_audio_path)
-            wav = wav.astype(np.float32) / 32768.0
-            await self.tts.audio_manager.play_audio_async(wav, blocking=True)
-        except Exception as e:
-            print(f"⚠️ Error playing wake audio: {e}")
     
     def _on_interrupt_detected(self):
         """Callback for interrupt detection"""
@@ -212,11 +206,9 @@ class ELSSASystem:
         )
         
         if result['interrupted']:
-            print("🔄 Speech was interrupted")
             await self.transition_to_active_listening()
             return False
         else:
-            print("✅ Speech completed")
             async with self.state_lock:
                 self.current_state = SystemState.ACTIVE
             return True
@@ -311,16 +303,21 @@ class ELSSASystem:
                 self.asr.start()
             
             try:
-                silence_detected, user_text = await asyncio.wait_for(
+                silence_detected, _ = await asyncio.wait_for(
                     self.asr.wait_for_silence_or_text_async(timeout=self.config.asr_timeout),
                     timeout=self.config.asr_timeout + 1.0
                 )
             except asyncio.TimeoutError:
-                print("⏰ Conversation timeout")
-                silence_detected, user_text = False, ""
+                silence_detected = False
             
+            # Add small delay after silence detection to allow processing remaining audio chunks
+            if silence_detected:
+                await asyncio.sleep(0.5)  # Wait for any remaining chunks to be processed
+            
+            # Get final text from stop_async() which includes all processed chunks
+            user_text = ""
             if self.asr.is_running:
-                await self.asr.stop_async()
+                user_text = await self.asr.stop_async() 
             
             has_meaningful_input = user_text and len(user_text.strip()) > 0
             return has_meaningful_input, user_text
@@ -350,9 +347,8 @@ class ELSSASystem:
             
             # Handle conversation turn
             has_input, user_text = await self._handle_conversation_turn()
-            # FIXME: this is for testing, remove it later
-            has_input = True
-            user_text = "Explain photon synthesis."
+            # has_input = True            
+            # user_text = random.choice(qa_test_list)
             
             if has_input:
                 silence_count = 0
@@ -361,7 +357,6 @@ class ELSSASystem:
                 # Use streaming response directly to TTS
                 completed = await self._process_user_input_streaming(user_text)
                 if not completed:
-                    print("🔄 Continuing conversation after interrupt...")
                     continue
             else:
                 silence_count += 1
@@ -370,7 +365,7 @@ class ELSSASystem:
                 if silence_count == 1:
                     completed = await self.speak_with_interrupt_support("Where did you go?")
                 elif silence_count == 2:
-                    completed = await self.speak_with_interrupt_support("Still can't hear you...")
+                    completed = await self.speak_with_interrupt_support("Still can't hear you!")
                 else:
                     break
                 

@@ -1,47 +1,39 @@
-import asyncio
+# create processing chime sound: signify end of listening, start of processing
+
+import numpy as np
+import scipy.io.wavfile
 import os
-import time
-from src.layer_2_agentic_reasoning.llm_runner import LLMRunner
-from src.layer_2_agentic_reasoning.context_manager import ContextManager
-from google import genai
 
+def create_processing_chime(
+    filename="assets/audio/processing_chime.wav",
+    duration=0.7,
+    sr=24000,
+    freq1=880,
+    freq2=1320,
+    gap=0.08
+):
+    # "Ding-ding" chime: two short tones, second higher, with a small gap
+    t1 = np.linspace(0, 0.18, int(sr * 0.18), False)
+    t2 = np.linspace(0, 0.13, int(sr * 0.13), False)
+    gap_silence = np.zeros(int(sr * gap))
 
+    tone1 = 0.6 * np.cos(2 * np.pi * freq1 * t1) * np.exp(-6 * t1)
+    tone2 = 0.5 * np.cos(2 * np.pi * freq2 * t2) * np.exp(-7 * t2)
 
+    audio = np.concatenate([tone1, gap_silence, tone2])
 
+    # Pad or trim to duration
+    if len(audio) < int(sr * duration):
+        audio = np.pad(audio, (0, int(sr * duration) - len(audio)))
+    else:
+        audio = audio[:int(sr * duration)]
 
-async def main():
-    context_manager = ContextManager()
+    # Normalize to int16
+    audio = audio / np.max(np.abs(audio))
+    audio_int16 = np.int16(audio * 32767)
 
-    await context_manager.start_new_session()
-    prompt = [
-        {"role": "system", "content": "You are a helpful assistant named ELSSA. Answer concisely and to the point."},
-        {"role": "user", "content": "Explain photon synthesis."},
-    ]
-    for p in prompt:
-        await context_manager.add_message(p["role"], p["content"])
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    scipy.io.wavfile.write(filename, sr, audio_int16)
+    print(f"Processing chime saved to {filename}")
 
-    conversation_context = await context_manager.get_conversation_context()
-
-    # client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-    # model = "gemini-2.0-flash"
-    # response = client.models.generate_content_stream(
-    #     model=model,
-    #     contents="Tell me a story about a cat.",
-    # )
-    # for chunk in response:
-    #     # print(chunk.text, end="", flush=True)
-    #     print(f"Chunk: {chunk.text}. Length: {len(chunk.text)}\n")
-        
-    runner = LLMRunner()
-    runner.launch()
-    time.sleep(3)
-    try:
-        for chunk in runner.chat(conversation_context):
-            print(chunk, end="", flush=True)
-            # print(f"Chunk: {chunk}. Length: {len(chunk)}\n")
-    except Exception as e:
-        print(e)
-        runner.stop_server()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+create_processing_chime()

@@ -1,35 +1,49 @@
-# ELSSA System Configuration - Optimized for Memory Efficiency
-# Based on performance testing results from 2025-07-05
-
 # Audio Settings
 sample_rate: 16000
 input_device: null   # null = default input device, or specify device ID/name
-output_device: null  # null = default output device, or specify device ID/name
+output_device: null 
 
 # Wake Word Detection
 wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 interrupt_wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 
-# Session Management - Optimized Timings
-silence_timeout: 2  
+# Session Management
+silence_timeout: 3  
 max_silence_retries: 3
 
-# ASR Settings - Memory Optimized
-asr_timeout: 30      # REDUCED from 60s: Faster timeout
-chunk_duration: 3.0  # ✅ OPTIMAL: Best for Whisper accuracy  
-overlap_duration: 0.5 # ✅ OPTIMAL: Good context overlap
+# ASR Settings
+asr_model: "base.en"
+asr_timeout: 30
+chunk_duration: 5.0
+overlap_duration: 3.0
+# meaningless_phrases: ["uh", "um", "ah", "eh", "mm", "hmm", "hm", "thank you", "thanks", "bye", "goodbye"]
 
-# TTS Settings - Major Memory Optimization  
-speed: 1.0
-emotion: "@MyShell"
-# TTS Playback Buffer - CRITICAL OPTIMIZATION
-tts_buffer_duration: 20  # INCREASED from 10s to handle larger chunks
-tts_timeout_buffer_wait: 30  # INCREASED from 10s to prevent timeout
+# TTS Settings 
+tts_engine: "coqui" # "openvoice"
+
+## CoquiTTS
+coqui_tts_model_path: "models/CoquiTTS/tts_models--en--ljspeech--tacotron2-DDC/model_file.pth"
+coqui_tts_model_config_path: "models/CoquiTTS/tts_models--en--ljspeech--tacotron2-DDC/config.json"
+coqui_tts_vocoder_model_path: "models/CoquiTTS/vocoder_models--en--ljspeech--hifigan_v2/model_file.pth"
+coqui_tts_vocoder_model_config_path: "models/CoquiTTS/vocoder_models--en--ljspeech--hifigan_v2/config.json"
+coqui_tts_gpu: False
+
+## OpenVoiceTTS
+openvoice_tts_ckpt_base_dir: "models/openvoice/checkpoints/base_speakers/EN"
+openvoice_tts_ckpt_converter_dir: "models/openvoice/checkpoints/converter"
+openvoice_tts_reference_speaker_path: "assets/audio/ref_voice.mp3"
+openvoice_tts_output_dir: "models/openvoice/outputs"
+
+tts_buffer_duration: 20
+tts_timeout_buffer_wait: 30
 
 # LLM Settings
 model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-IQ3_M.gguf"
 n_ctx: 16384 
 temperature: 0.7
-max_tokens: 512
+max_tokens: 128
 stop: ["<|user|>", "<|assistant|>", "< Mayer|>", "<3", "<_assistant_|>", "<_user_|>"]
-n_gpu_layers: 26
+n_gpu_layers: 0
+
+# Context Management
+max_context_length: 10

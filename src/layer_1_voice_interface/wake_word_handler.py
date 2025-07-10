@@ -29,7 +29,6 @@ class WakeWordHandler:
         block_size: int = 512,
         threshold: float = 0.9
     ):
-        openwakeword.utils.download_models()
         self.sample_rate = sample_rate
         self.block_size = block_size
         self.threshold = threshold
@@ -82,7 +81,6 @@ class WakeWordHandler:
                 if self._main_loop and not self._main_loop.is_closed():
                     try:
                         asyncio.run_coroutine_threadsafe(cb(), self._main_loop)
-                        print("✅ Async callback submitted to main loop")
                     except Exception as e:
                         print(f"⚠️ Error submitting async callback: {e}")
                 else:
@@ -100,7 +98,6 @@ class WakeWordHandler:
         # Capture reference to current event loop if available
         try:
             self._main_loop = asyncio.get_running_loop()
-            print("✅ Captured reference to main event loop")
         except RuntimeError:
             print("⚠️ No event loop running - async callbacks will be skipped")
             self._main_loop = None
@@ -108,7 +105,6 @@ class WakeWordHandler:
         self._stop_event.clear()
         self._stream_thread = threading.Thread(target=self._stream_loop, daemon=True)
         self._stream_thread.start()
-        print("✅ Wake word detection started")
 
     def stop(self) -> None:
         """Stop wake word detection"""
@@ -117,7 +113,6 @@ class WakeWordHandler:
             self._stream_thread.join()
         self.audio_manager.close()
         self._main_loop = None
-        print("✅ Wake word detection stopped")
 
 
 class InterruptWakeWordHandler:
@@ -136,11 +131,7 @@ class InterruptWakeWordHandler:
         self.block_size = block_size
         self.threshold = threshold
         
-        # Load OpenWakeWord model (reuse download if already done)
-        try:
-            openwakeword.utils.download_models()
-        except:
-            pass  # Models might already be downloaded
+        # Load OpenWakeWord model
         self.model = Model(wakeword_models=wakeword_models)
         
         # IMPROVED: Use dedicated audio stream with different device settings to avoid conflicts
@@ -214,13 +205,11 @@ class InterruptWakeWordHandler:
 
     def _trigger_interrupt(self):
         """IMPROVED: Trigger interrupt callback with immediate audio stop"""
-        print("🚨 IMMEDIATE INTERRUPT TRIGGERED!")
         
         if self._interrupt_callback:
             try:
                 # Call interrupt callback immediately - this should stop audio playback
                 self._interrupt_callback()
-                print("✅ Interrupt callback executed successfully")
             except Exception as e:
                 print(f"⚠️ Error in interrupt callback: {e}")
         else:
@@ -229,7 +218,6 @@ class InterruptWakeWordHandler:
     def set_interrupt_callback(self, callback: Callable[[], None]) -> None:
         """Set callback to be called when wake word detected during TTS"""
         self._interrupt_callback = callback
-        print(f"✅ Interrupt callback set: {callback.__name__ if hasattr(callback, '__name__') else 'lambda'}")
 
     def start_interrupt_monitoring(self) -> None:
         """IMPROVED: Start monitoring with fast initialization"""
@@ -237,7 +225,6 @@ class InterruptWakeWordHandler:
             print("⚠️ Interrupt monitoring already running")
             return  # Already running
             
-        print("🎯 Starting interrupt monitoring...")
         self._stop_event.clear()
         self._is_active = True
         
@@ -248,7 +235,6 @@ class InterruptWakeWordHandler:
             name="InterruptDetection"
         )
         self._interrupt_thread.start()
-        print("✅ Interrupt monitoring started with high responsiveness")
 
     def stop_interrupt_monitoring(self) -> None:
         """Stop monitoring for wake word interrupts"""
@@ -259,7 +245,6 @@ class InterruptWakeWordHandler:
             self._interrupt_thread.join(timeout=1.0)  # Don't wait too long
             
         self.audio_manager.close()
-        print("🎯 Interrupt monitoring stopped")
 
     def is_monitoring(self) -> bool:
         """Check if currently monitoring for interrupts"""

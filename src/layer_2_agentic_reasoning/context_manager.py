@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
 from pathlib import Path
-
+from src.layer_2_agentic_reasoning.system_prompt import system_prompt
 
 @dataclass
 class ChatMessage:
@@ -94,7 +94,7 @@ class ContextManager:
             # Add system message
             system_msg = ChatMessage(
                 role="system",
-                content="You are a helpful assistant named ELSSA. Answer concisely and to the point.",
+                content=system_prompt,
                 timestamp=self._get_current_timestamp(),
                 session_id=session_id
             )

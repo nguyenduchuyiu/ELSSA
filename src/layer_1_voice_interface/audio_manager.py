@@ -12,7 +12,6 @@ try:
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
 except Exception as e:
-    print(f"⚠️ Warning: Could not load config.yaml ({e}). Using defaults.")
     config = {
         'sample_rate': 16000,
         'input_device': None,
@@ -95,7 +94,6 @@ class AudioManager:
         Args:
             fade_out_ms: Fade-out duration in milliseconds. 0 = immediate stop.
         """
-        print(f"🛑 Setting stop event (fade_out: {fade_out_ms}ms)")
         self._playback_stop_event.set()
         
     
@@ -144,7 +142,6 @@ class AudioManager:
         else:
             audio_float32 = amplified_audio
             
-        print(f"🔊 Playing audio - Shape: {audio_float32.shape}, Peak: {np.max(np.abs(audio_float32)):.6f}")
         
         if not blocking:
             # Non-blocking, just start playback (use old method for non-interruptible)
@@ -171,7 +168,6 @@ class AudioManager:
         """
         audio_with_fade = self.apply_fade_in(audio_data, fade_ms=50)
         expected_duration = len(audio_with_fade) / self.sample_rate
-        print(f"🎵 Starting interruptible playback - Duration: {expected_duration:.2f}s")
 
         self._playback_stop_event.clear()
         self._is_playing = True
@@ -195,7 +191,6 @@ class AudioManager:
                 while audio_pos < len(audio_with_fade):
                     # Check for interrupt BEFORE writing each chunk
                     if self._playback_stop_event.is_set():
-                        print("⚡ Interrupt detected - stopping playback immediately")
                         stream.abort()
                         # Apply quick fade-out to remaining audio to avoid clicks
                         await asyncio.sleep(0.05)  # Short fade-out time
@@ -221,7 +216,6 @@ class AudioManager:
                     # Safety timeout check
                     elapsed = asyncio.get_event_loop().time() - start_time
                     if elapsed > expected_duration + 2.0:
-                        print(f"⚠️ Playback timeout after {elapsed:.2f}s")
                         break
 
                 # Wait for stream to finish current buffers
@@ -231,12 +225,10 @@ class AudioManager:
                     if elapsed > expected_duration + 2.0:
                         break
 
-            print("✅ Interruptible playback completed successfully")
             self._is_playing = False
             return True
 
         except Exception as e:
-            print(f"⚠️ Error in interruptible playback: {e}")
             self._is_playing = False
             return False
 
@@ -375,10 +367,8 @@ class AudioManager:
             # Ensure no clipping
             amplified = np.clip(amplified, -1.0, 1.0)
             
-            print(f"🔊 Audio amplified: {current_peak:.6f} -> {np.max(np.abs(amplified)):.6f}")
             return amplified
         else:
-            print("⚠️ Audio is silent (no peak detected)")
             return audio_centered
     
     def close(self) -> None:

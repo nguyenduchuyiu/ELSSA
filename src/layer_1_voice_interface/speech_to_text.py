@@ -4,10 +4,15 @@ import numpy as np
 import time
 import re
 import asyncio
-from typing import List, Optional, Callable, Union, Awaitable
+from typing import List, Optional, Callable, Union, Awaitable, Any, Dict, List
 from whispercpp import Whisper
 
+from src.utils.sound_player import play_listening_chime, play_processing_chime
+
 from .audio_manager import AudioManager
+
+import yaml
+config = yaml.safe_load(open('config.yaml'))
 
 class SpeechToText:
     """
@@ -15,7 +20,7 @@ class SpeechToText:
     Supports real-time transcription with silence detection and noise filtering.
     """
     
-    DEFAULT_MODEL = "tiny.en"
+    DEFAULT_MODEL = config.get('asr_model', 'tiny.en')
     DEFAULT_MODEL_DIR = "models"
     
     # Whisper noise patterns to filter out
@@ -76,8 +81,9 @@ class SpeechToText:
         self.audio_buffer = []
 
         # Store all recognized text
-        self._all_text = []
+        self.segments = []
         self._all_text_lock = threading.Lock()
+        self.chunk_count = 0  # Track chunk number for offset calculation
 
         # Threads
         self._recorder_thread = threading.Thread(target=self._record_stream, daemon=True)
@@ -143,15 +149,42 @@ class SpeechToText:
             return ""
             
         # Filter common meaningless whisper outputs
-        meaningless_phrases = [
-            'uh', 'um', 'ah', 'eh', 'mm', 'hmm', 'hm',
-            'thank you', 'thanks', 'bye', 'goodbye'  # Sometimes whisper hallucinates these
-        ]
+        meaningless_phrases = config.get('meaningless_phrases', [])
         
         if cleaned.lower().strip() in meaningless_phrases:
             return ""
             
         return cleaned
+
+    def _find_best_overlap(self, prev: str, nxt: str) -> str:
+        prev_words = prev.strip().split()
+        next_words = nxt.strip().split()
+        for i in range(min(len(prev_words), len(next_words)), 0, -1):
+            if prev_words[-i:] == next_words[:i]:
+                return ' '.join(next_words[:i])
+        return ""
+
+    def _merge_overlapping_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not segments:
+            return []
+        merged = [segments[0].copy()]
+        for seg in segments[1:]:
+            last = merged[-1]
+            if seg['start_ms'] < last['end_ms']:
+                overlap = self._find_best_overlap(last['text'], seg['text'])
+                if overlap:
+                    non_overlap = seg['text'].strip()[len(overlap):].strip()
+                    last['text'] = (last['text'].strip() + ' ' + non_overlap).strip()
+                    last['end_ms'] = seg['end_ms']
+                else:
+                    merged.append(seg.copy())
+            else:
+                merged.append(seg.copy())
+        return merged
+
+    def _complete_sentence(self, segments: List[Dict[str, Any]]) -> str:
+        merged_segments = self._merge_overlapping_segments(segments)
+        return ' '.join([seg['text'].strip() for seg in merged_segments])
 
     def _is_meaningful_text(self, text: str) -> bool:
         """
@@ -194,52 +227,61 @@ class SpeechToText:
             audio = np.array(chunk, dtype=np.int16).astype(np.float32) / 32768.0
             
             start = time.time()
-            raw_text = self.asr.transcribe(audio.tolist())
+            segments = self.asr.transcribe(audio.tolist())
             latency = time.time() - start
             
-            # Filter noise before processing
-            cleaned_text = self._filter_whisper_noise(raw_text.strip())
+            # Calculate the offset in ms for this chunk
+            chunk_offset_ms = int(self.chunk_count * self.step_samples * 1000 / self.sample_rate)
             
-            print(f"Raw: '{raw_text.strip()}' -> Cleaned: '{cleaned_text}' (⏱️ {latency:.2f}s)", flush=True)
-            
-            # Check if we got meaningful text after filtering
-            if self._is_meaningful_text(cleaned_text):
-                # Reset silence timer on meaningful text
-                self._reset_silence_timer()
-                self.last_text_time = time.time()
+            # Process each segment
+            for seg in segments:
+                seg["text"] = seg["text"].removesuffix(".").strip()
+                seg['start_ms'] += chunk_offset_ms
+                seg['end_ms'] += chunk_offset_ms
                 
-                # Store recognized text
-                with self._all_text_lock:
-                    self._all_text.append(cleaned_text)
+                # Filter noise before processing
+                seg['text'] = self._filter_whisper_noise(seg['text'])
+
+                print(f"Raw: '{seg}' \n -> Cleaned: '{seg['text']}' (⏱️ {latency:.2f}s)", flush=True)
                 
-                print(f"✅ Meaningful text detected: '{cleaned_text}'")
-                
-                # Start new silence timer after meaningful text
-                self.silence_timer = threading.Timer(self.silence_threshold, self._on_silence)
-                self.silence_timer.start()
-                print(f"🔄 Silence timer restarted - waiting {self.silence_threshold}s for next input")
-                
-                # Notify callback if provided (support both sync and async)
-                if self.text_callback:
-                    if asyncio.iscoroutinefunction(self.text_callback):
-                        # Async callback - run in new task
-                        try:
-                            loop = asyncio.get_event_loop()
-                            loop.create_task(self.text_callback(cleaned_text))
-                        except RuntimeError:
-                            # No event loop, just call sync version if possible
-                            pass
-                    else:
-                        # Sync callback
-                        self.text_callback(cleaned_text)
-            else:
-                # Start silence timer if no meaningful text and no timer running
-                if self.last_text_time is None:
+                # Check if we got meaningful text after filtering
+                if self._is_meaningful_text(seg['text']):
+                    # Reset silence timer on meaningful text
+                    self._reset_silence_timer()
                     self.last_text_time = time.time()
+                    
+                    # Store recognized text
+                    with self._all_text_lock:
+                        self.segments.append(seg)
+                    
+                    print(f"✅ Meaningful text detected: '{seg['text']}'")
+                    
+                    # Start new silence timer after meaningful text
                     self.silence_timer = threading.Timer(self.silence_threshold, self._on_silence)
                     self.silence_timer.start()
-                    print(f"🔇 Starting silence timer - no meaningful text detected")
-                
+                    
+                    # Notify callback if provided (support both sync and async)
+                    if self.text_callback:
+                        if asyncio.iscoroutinefunction(self.text_callback):
+                            # Async callback - run in new task
+                            try:
+                                loop = asyncio.get_event_loop()
+                                loop.create_task(self.text_callback(seg['text']))
+                            except RuntimeError:
+                                # No event loop, just call sync version if possible
+                                pass
+                        else:
+                            # Sync callback
+                            self.text_callback(seg['text'])
+                else:
+                    # Start silence timer if no meaningful text and no timer running
+                    if self.last_text_time is None:
+                        self.last_text_time = time.time()
+                        self.silence_timer = threading.Timer(self.silence_threshold, self._on_silence)
+                        self.silence_timer.start()
+                        print(f"🔇 Starting silence timer - no meaningful text detected")
+            
+            self.chunk_count += 1
             self.audio_queue.task_done()
 
     def _reset_silence_timer(self):
@@ -276,39 +318,31 @@ class SpeechToText:
         start_time = time.time()
         while time.time() - start_time < timeout:
             if self.silence_detected.is_set():
+                # Wait a bit more to process any remaining audio chunks in queue
+                print("🔇 Silence detected, waiting for remaining audio chunks...")
+                additional_wait_time = min(2.0, self.chunk_duration)  # Wait up to chunk duration or 2s
+                
+                end_wait_time = time.time() + additional_wait_time
+                while time.time() < end_wait_time:
+                    await asyncio.sleep(0.1)
+                    # Check if new meaningful text was added during wait
+                    with self._all_text_lock:
+                        if self.segments and self.segments[-1]['end_ms'] > time.time() * 1000 - additional_wait_time * 1000:
+                            # Recent text detected, extend wait a bit more
+                            end_wait_time = time.time() + 0.5
+                            print(f"🔄 New text detected during wait, extending...")
+                
                 with self._all_text_lock:
                     # Join all meaningful text and apply final filtering
-                    final_text = " ".join(self._all_text).strip()
+                    final_text = self._complete_sentence(self.segments)
                     final_cleaned = self._filter_whisper_noise(final_text)
+                print(f"📝 Final collected text: '{final_cleaned}'")
                 return True, final_cleaned
             await asyncio.sleep(0.1)  # Non-blocking sleep
         
         # Timeout reached
         with self._all_text_lock:
-            final_text = " ".join(self._all_text).strip()
-            final_cleaned = self._filter_whisper_noise(final_text)
-        return False, final_cleaned
-
-    def wait_for_silence_or_text(self, timeout: float = 10.0) -> tuple[bool, str]:
-        """
-        Wait for either silence detection or timeout
-        
-        Returns:
-            (silence_detected, final_cleaned_text)
-        """
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if self.silence_detected.is_set():
-                with self._all_text_lock:
-                    # Join all meaningful text and apply final filtering
-                    final_text = " ".join(self._all_text).strip()
-                    final_cleaned = self._filter_whisper_noise(final_text)
-                return True, final_cleaned
-            time.sleep(0.1)
-        
-        # Timeout reached
-        with self._all_text_lock:
-            final_text = " ".join(self._all_text).strip()
+            final_text = self._complete_sentence(self.segments)
             final_cleaned = self._filter_whisper_noise(final_text)
         return False, final_cleaned
 
@@ -316,8 +350,9 @@ class SpeechToText:
         """Reset for new ASR session"""
         self._reset_silence_timer()
         with self._all_text_lock:
-            self._all_text.clear()
+            self.segments.clear()
         self.last_text_time = None
+        self.chunk_count = 0  # Track chunk number for offset calculation
         print("🔄 ASR session reset")
 
     def start(self):
@@ -340,55 +375,8 @@ class SpeechToText:
         self._recorder_thread.start()
         self._worker_thread.start()
         print("✅ SpeechToText started")
-
-    def stop(self) -> str:
-        """
-        Stops ASR service and returns all recognized text concatenated.
-        Keeps model weights in memory, only stops detection threads.
+        play_listening_chime()
         
-        Returns:
-            All recognized text joined as a single string, filtered
-        """
-        if not self.is_running:
-            return ""
-            
-        print("\n❌ Stopping SpeechToText...")
-        self.stop_event.set()
-        
-        # Get final text before cleanup
-        with self._all_text_lock:
-            final_text = " ".join(self._all_text).strip()
-            final_cleaned = self._filter_whisper_noise(final_text)
-        
-        # Stop threads
-        if self._recorder_thread.is_alive():
-            self._recorder_thread.join()
-        if self._worker_thread.is_alive():
-            self._worker_thread.join()
-            
-        # Close audio stream
-        self.audio_manager.close()
-        
-        # Clear buffers (but keep ASR model in memory)
-        with self.buffer_lock:
-            self.audio_buffer.clear()
-        
-        # Clear queue
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except:
-                break
-        
-        # Clear text storage
-        with self._all_text_lock:
-            self._all_text.clear()
-        
-        self.is_running = False
-        print("✅ SpeechToText stopped (model weights preserved)")
-        
-        # Return the saved final text
-        return final_cleaned
 
     async def stop_async(self) -> str:
         """
@@ -406,8 +394,7 @@ class SpeechToText:
         
         # Get final text before cleanup
         with self._all_text_lock:
-            final_text = " ".join(self._all_text).strip()
-            final_cleaned = self._filter_whisper_noise(final_text)
+            final_text = self._complete_sentence(self.segments)
         
         # Run thread joins in executor to avoid blocking event loop
         loop = asyncio.get_event_loop()
@@ -434,13 +421,13 @@ class SpeechToText:
         
         # Clear text storage
         with self._all_text_lock:
-            self._all_text.clear()
+            self.segments.clear()
         
         self.is_running = False
         print("✅ SpeechToText stopped (model weights preserved)")
+        play_processing_chime()
         
-        # Return the saved final text
-        return final_cleaned
+        return final_text
             
     def transcribe_file(self, audio_file_path: str) -> str:
         """
