@@ -5,7 +5,9 @@ from datetime import datetime
 from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from src.layer_2_agentic_reasoning.system_prompt import system_prompt
+import yaml
+
+config = yaml.safe_load(open("config.yaml", "r"))
 
 @dataclass
 class ChatMessage:
@@ -94,7 +96,7 @@ class ContextManager:
             # Add system message
             system_msg = ChatMessage(
                 role="system",
-                content=system_prompt,
+                content=config["system_prompt"],
                 timestamp=self._get_current_timestamp(),
                 session_id=session_id
             )

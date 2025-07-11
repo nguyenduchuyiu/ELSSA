@@ -1,39 +1,59 @@
-# create processing chime sound: signify end of listening, start of processing
+import webbrowser
+from youtube_search import YoutubeSearch
 
-import numpy as np
-import scipy.io.wavfile
-import os
-
-def create_processing_chime(
-    filename="assets/audio/processing_chime.wav",
-    duration=0.7,
-    sr=24000,
-    freq1=880,
-    freq2=1320,
-    gap=0.08
-):
-    # "Ding-ding" chime: two short tones, second higher, with a small gap
-    t1 = np.linspace(0, 0.18, int(sr * 0.18), False)
-    t2 = np.linspace(0, 0.13, int(sr * 0.13), False)
-    gap_silence = np.zeros(int(sr * gap))
-
-    tone1 = 0.6 * np.cos(2 * np.pi * freq1 * t1) * np.exp(-6 * t1)
-    tone2 = 0.5 * np.cos(2 * np.pi * freq2 * t2) * np.exp(-7 * t2)
-
-    audio = np.concatenate([tone1, gap_silence, tone2])
-
-    # Pad or trim to duration
-    if len(audio) < int(sr * duration):
-        audio = np.pad(audio, (0, int(sr * duration) - len(audio)))
+def youtube_search_tool(query: str):
+    results = YoutubeSearch(query).to_dict()
+    if results:
+        url = 'https://www.youtube.com' + results[0]['url_suffix']
+        return {"url": url, "title": results[0].get("title", "")}
     else:
-        audio = audio[:int(sr * duration)]
+        return {"error": "No results found."}
 
-    # Normalize to int16
-    audio = audio / np.max(np.abs(audio))
-    audio_int16 = np.int16(audio * 32767)
+# def youtube_search_tool(query: str):
+#     return {"error": "No results found."}
 
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    scipy.io.wavfile.write(filename, sr, audio_int16)
-    print(f"Processing chime saved to {filename}")
+def open_link(url: str):
+    try:
+        result = webbrowser.open(url)
+        if result:
+            return {"status": "success"}
+        else:
+            return {"status": "error", "error": "Failed to open URL"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
-create_processing_chime()
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_search",
+        "description": "Search for url for a video on youtube.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"}
+            },
+            "required": ["query"]
+        }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_link",
+            "description": "Open a link in browser. Only use this tool if you have a valid url.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"}
+                },
+                "required": ["url"]
+            }
+        }
+    }
+]
+
+function_map = {
+    "youtube_search": youtube_search_tool,
+    "open_link": open_link
+}
