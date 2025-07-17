@@ -12,6 +12,8 @@ TTS
 fuzzywuzzy
 python-Levenshtein
 mutagen
+docstring-parser
+youtube-search
 # elevenlabs
 # librosa==0.9.1
 # faster-whisper==0.9.0

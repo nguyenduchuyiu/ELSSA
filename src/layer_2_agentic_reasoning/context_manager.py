@@ -6,6 +6,7 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import yaml
+from src.layer_3_plugins.tools import tools, format_tools_for_prompt
 
 config = yaml.safe_load(open("config.yaml", "r"))
 
@@ -94,14 +95,20 @@ class ContextManager:
             )
             
             # Add system message
-            system_msg = ChatMessage(
+            self.current_session.messages.append(ChatMessage(
                 role="system",
                 content=config["system_prompt"],
                 timestamp=self._get_current_timestamp(),
                 session_id=session_id
-            )
-            self.current_session.messages.append(system_msg)
+            ))
             
+            # Add tool usage instructions
+            self.current_session.messages.append(ChatMessage(
+                role="system",
+                content=format_tools_for_prompt(tools),
+                timestamp=self._get_current_timestamp(),
+                session_id=session_id
+            ))
             print(f"🆕 Started new conversation session: {session_id}")
             return session_id
     

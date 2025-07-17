@@ -31,7 +31,8 @@ class TTSInterruptManager:
             
             # Create new interrupt handler for this session
             self._interrupt_handler = InterruptWakeWordHandler()
-            self._interrupt_handler.set_interrupt_callback(self._on_interrupt_detected)
+            # self._interrupt_handler.set_interrupt_callback(self._on_interrupt_detected)
+            self._interrupt_handler.set_interrupt_callback(lambda: None) # FIXME: for now, we don't need to detect interrupt
             self._interrupt_handler.start_interrupt_monitoring()
             
         except Exception as e:

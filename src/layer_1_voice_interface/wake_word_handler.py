@@ -125,7 +125,7 @@ class InterruptWakeWordHandler:
         wakeword_models: List[str] = [INTERRUPT_WAKEWORD_MODEL],
         sample_rate: int = AudioManager.DEFAULT_SAMPLE_RATE,
         block_size: int = 128,  # IMPROVED: Even smaller for faster response
-        threshold: float = 0.9  # IMPROVED: Slightly lower for better sensitivity
+        threshold: float = 1.0  # IMPROVED: Slightly lower for better sensitivity
     ):
         self.sample_rate = sample_rate
         self.block_size = block_size
@@ -191,7 +191,6 @@ class InterruptWakeWordHandler:
             # IMPROVED: Ultra-fast polling for minimal interrupt latency  
             time.sleep(0.002)  # 2ms polling - extremely responsive
         
-        print("🎯 Interrupt detection loop ended")
 
     def _pause_after_interrupt(self):
         """FIXED: Brief pause after interrupt to avoid rapid re-triggering"""

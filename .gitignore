@@ -40,3 +40,4 @@ models/Llama-3.2-3B-Instruct
 models/openvoice/
 models/CoquiTTS/
 models/TinyLlama
+models/

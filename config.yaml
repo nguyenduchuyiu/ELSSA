@@ -38,12 +38,15 @@ tts_buffer_duration: 20
 tts_timeout_buffer_wait: 30
 
 # LLM Settings
-model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-IQ3_M.gguf"
+# model_path: "models/xLAM/Salesforce.xLAM-2-3b-fc-r.Q4_K_M.gguf"
+# model_path: "models/Phi/Phi-3-mini-128k-instruct.Q4_K_M.gguf"
+model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-Q6_K_L.gguf"
+# model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-IQ3_M.gguf"
 # model_path: "models/TinyLlama/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
-n_ctx: 16384 
+n_ctx: 16384
 temperature: 0.7
-max_tokens: 256
-stop: ["<|user|>", "<|assistant|>", "< Mayer|>", "<3", "<_assistant_|>", "<_user_|>"]
+max_tokens: 2048
+stop: ["<|user|>", "<|assistant|>", "< Mayer|>", "<3", "<_assistant_|>", "<_user_|>", "<|im_start|>", "<|im_end|>"]
 n_gpu_layers: 0
 n_batch: 512
 
@@ -61,4 +64,53 @@ system_prompt: |
   You speak like someone who truly understands what's happening around.
   You can initiate small talk, ask follow-up questions, notice subtle emotions in the user's words, and react naturally — like a thoughtful friend would. 
   You should talk concisely and to the point.
-  Explain what you are about to do before using the tool.
+
+  Follow this output pattern:
+   1. thoughts: Think what to do next (use the tools or not?, just chat with user or call tools?)
+   2. response: Answer to user
+   3. tool_calls: tools (if needed) or empty array if you don't need to use tools
+   4. is_final_answer: True if you want to end the turn, False if you want to continue the turn.
+
+  NOTES: 
+    1. If you use a tool, you should set is_final_answer to False to continue the turn to see the result of tool call.
+    2. If you want to ask user for confirmation, you should set is_final_answer to True to end the turn.
+
+
+example_conversation: |
+   Example conversation:
+   History: user: "Find and open song Photograph by Ed Sheeran on YouTube"
+   Turn 1:
+   1. thoughts: "I need to find a song on YouTube."
+   2. response: "I've found it! Now opening the video for you."
+   3. tool_calls: [{"name": "youtube_search", "arguments": {"query": "Photograph by Ed Sheeran"}}]
+   4. is_final_answer: False (continue turn to see tool call result)  
+   Turn 2:
+   History: user: "Find and open song Photograph by Ed Sheeran on YouTube"
+            assistant: "I've found it! Now opening the video for you."
+            tool: {"name": "youtube_search", "result": {"url": "https://www.youtube.com/watch?v=7NgCf0TPgW8"}}
+   1. thoughts: "I found a song on YouTube. I need to ask user for confirmation." 
+   2. response: "I've found it! Do you want to open it?"
+   3. tool_calls: [] # no tool calls (need to ask user for confirmation)
+   4. is_final_answer: True (end turn to ask user for confirmation)
+   After user confirm:
+   History: user: "Find and open song Photograph by Ed Sheeran on YouTube"
+            assistant: "I've found it! Now opening the video for you."
+            tool: {"name": "youtube_search", "result": {"url": "https://www.youtube.com/watch?v=7NgCf0TPgW8"}}
+            user: "Yes, open it."
+   1. thoughts: "User confirmed to open the video. I need to open the video and wait for result." 
+   2. response: "Opening the video for you."
+   3. tool_calls: [{"name": "open_link", "arguments": {"url": "https://www.youtube.com/watch?v=7NgCf0TPgW8"}}]
+   4. is_final_answer: False (continue turn to see tool call result)
+   After tool call:
+   History: user: "Find and open song Photograph by Ed Sheeran on YouTube"
+            assistant: "I've found it! Now opening the video for you."
+            tool: {"name": "youtube_search", "result": {"url": "https://www.youtube.com/watch?v=7NgCf0TPgW8"}}
+            user: "Yes, open it."
+            assistant: "Opening the video for you."
+            tool: {"name": "open_link", "result": {"status": "success"}}
+   1. thoughts: "User confirmed to open the video. I have opened the video. I need to confirm to user." 
+   2. response: "Done! The video is now playing."
+   3. tool_calls: [] # no tool calls (need to confirm to user)
+   4. is_final_answer: True (your work is done, end turn)
+
+super_mode: true

@@ -54,7 +54,7 @@ class BaseTTS(ABC):
         """Split text into manageable chunks for TTS processing"""
         sentences = re.split(r'(?<=[.!?]) +|\n+', text)
         # remove special characters like !, ...
-        sentences = [re.sub(r'[^\w\s]', '', sent) for sent in sentences]
+        sentences = [re.sub(r'[^\w\s?!]', '', sent) for sent in sentences]
         chunks, current = [], ''
         for sent in sentences:
             sent = sent.strip()
@@ -88,13 +88,12 @@ class BaseTTS(ABC):
     
     async def _generate_all_chunks(self, chunks: List[str]) -> List[np.ndarray]:
         """Generate all audio chunks sequentially to avoid CoquiTTS cache race conditions"""
-        print(f"🎯 Generating {len(chunks)} chunks sequentially...")
         
         chunk_audios = []
         for i, chunk_text in enumerate(chunks):
             try:
                 # Generate chunk synchronously to avoid race conditions
-                print(f"🔊 Processing chunk {i+1}/{len(chunks)}: '{chunk_text[:50]}...'")
+                print(f"🔊 Processing chunk {i+1}/{len(chunks)}: '{chunk_text}...'")
                 audio = self._generate_chunk(chunk_text)
                 chunk_audios.append(audio)
                 
@@ -142,6 +141,7 @@ class BaseTTS(ABC):
             raise RuntimeError("TTS model not loaded yet.")
             
         # chunks = self._split_text(text)
+        print(f"Received text: {text}")
         chunks = [text]
         if not chunks:
             return np.array([], dtype=np.float32)
@@ -181,14 +181,11 @@ class BaseTTS(ABC):
             chunks = self._split_text(text)
             if not chunks:
                 result['completed'] = True
-                print("🎯 TTS speak_async completed - No chunks to process")
                 return result
 
-            print(f"🎯 TTS processing {len(chunks)} chunks")
 
             # Setup interrupt monitoring if requested and available
             if interruptible and self.interrupt_manager:
-                print("🎯 Setting up interrupt monitoring...")
                 await self.interrupt_manager.setup_monitoring(interrupt_callback)
 
             try:
@@ -202,7 +199,6 @@ class BaseTTS(ABC):
                                     
                     # Play as one continuous audio stream
                     if play_audio and self.audio_manager:
-                        print(f"🎯 Playing continuous audio stream...")
                         completed = await self.audio_manager.play_audio_async(
                             combined_audio, 
                             blocking=True, 
@@ -224,7 +220,6 @@ class BaseTTS(ABC):
             finally:
                 # Cleanup interrupt monitoring
                 if interruptible and self.interrupt_manager:
-                    print("🎯 Cleaning up interrupt monitoring...")
                     await self.interrupt_manager.cleanup_monitoring()
                     
         except Exception as e:

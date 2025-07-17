@@ -152,6 +152,8 @@ class ELSSASystem:
 
             self.llm_runner = LLMRunner()
             self.llm_runner.launch()
+            # Reset conversation history for new session
+            self.llm_runner.reset_conversation()
             print("✅ LLM runner initialized")
             
             # Start new conversation session
@@ -164,7 +166,6 @@ class ELSSASystem:
     async def transition_to_speaking(self):
         """Transition to SPEAKING state"""
         async with self.state_lock:
-            print("🔄 Transitioning to SPEAKING state...")
             self.current_state = SystemState.SPEAKING
 
     async def transition_to_active_listening(self):
@@ -215,81 +216,126 @@ class ELSSASystem:
 
     async def _process_user_input_streaming(self, user_text: str) -> bool:
         """
-        Process user input and stream response directly to TTS
-        Returns True if completed, False if interrupted
+        Process user input with real-time streaming TTS and tool execution
         """
         if not self.llm_runner or not self.tts:
             fallback_response = "Sorry, I'm having trouble processing your request."
             return await self.speak_with_interrupt_support(fallback_response)
         
-        # Add user message to context
+        # Add user message to context (for session logging)
         await self.context_manager.add_message("user", user_text)
         
-        # Get conversation context for LLM
-        context_messages = await self.context_manager.get_conversation_context()
+        # Get full conversation context and send to LLM
+        conversation_context = await self.context_manager.get_conversation_context()
         
-        # Start streaming response
-        stream_response = self.llm_runner.chat(context_messages)
-        
-        # Transition to speaking state
-        await self.transition_to_speaking()
-        self._interrupt_detected.clear()
-        
-        print("🤖 Streaming response: ", end="", flush=True)
-        
-        # Stream response directly to TTS
-        full_response = ""
+        # Use chat_stream generator for real-time response streaming
         try:
-            # Use TTS streaming capability
-            result = await self.tts.speak_stream_async(
-                stream_response,
-                interruptible=True,
-                interrupt_callback=self._on_interrupt_detected
-            )
+            conversation_history = []
+            has_spoken = False
             
-            # Collect the full response for context saving
-            full_response = result.get('text', '')
+            for chunk in self.llm_runner.chat_stream(conversation_context):
+                # Update conversation history
+                conversation_history = chunk.get("conversation_history", [])
+                
+                chunk_type = chunk.get("type")
+                
+                if chunk_type == "response":
+                    # Speak response immediately
+                    response_text = chunk.get("message", "")
+                    if response_text:
+                        completed = await self.speak_with_interrupt_support(response_text)
+                        has_spoken = True
+                        
+                        if not completed:
+                            # Interrupted during speaking
+                            print("🔄 Conversation was interrupted")
+                            await self.transition_to_active_listening()
+                            return False
+                
+                elif chunk_type == "tool_start":
+                    # Optional: Could speak tool execution notification
+                    tool_calls = chunk.get("tool_calls", [])
+                    print(f"🔧 Tool calls: {tool_calls}")
+                    # await self.speak_with_interrupt_support("Let me help you with that.")
+                    pass
+                
+                elif chunk_type == "tool_complete":
+                    # Optional: Could speak tool completion
+                    pass
+                
+                elif chunk_type == "error":
+                    error_msg = chunk.get("message", "An error occurred")
+                    print(f"❌ {error_msg}")
+                    fallback_response = "Sorry, I encountered an error processing your request."
+                    return await self.speak_with_interrupt_support(fallback_response)
+                
+                elif chunk_type == "final":
+                    print("✅ Conversation completed")
+                    break
             
-            if result['interrupted']:
-                print("\n🔄 Speech was interrupted")
-                # Still save partial response to context
-                if full_response:
-                    await self.context_manager.add_message("assistant", full_response)
-                await self.transition_to_active_listening()
-                return False
-            else:
-                print("\n✅ Speech completed")
-                # Save full response to context
-                await self.context_manager.add_message("assistant", full_response)
+            # Save all new messages to context manager (skip user message as it's already saved)
+            for msg in conversation_history:
+                if msg["role"] == "user" and msg["content"] == user_text:
+                    continue  # Skip the user message we already added
+                await self.context_manager.add_message(msg["role"], msg["content"])
+            
+            if has_spoken:
                 async with self.state_lock:
                     self.current_state = SystemState.ACTIVE
                 return True
+            else:
+                # No response was spoken
+                fallback_response = "I'm not sure how to help with that."
+                return await self.speak_with_interrupt_support(fallback_response)
                 
         except Exception as e:
-            raise e
+            print(f"❌ Error in streaming: {e}")
+            fallback_response = "Sorry, I encountered an error processing your request."
+            return await self.speak_with_interrupt_support(fallback_response)
 
     async def _process_user_input(self, user_text: str) -> str:
         """Process user input and generate response (legacy method for non-streaming)"""
         if not self.llm_runner:
             return "Sorry, I'm having trouble processing your request."
         
-        # Add user message to context
+        # Add user message to context (for session logging)
         await self.context_manager.add_message("user", user_text)
         
-        # Get conversation context for LLM
-        context_messages = await self.context_manager.get_conversation_context()
-        
-        stream_response = self.llm_runner.chat(context_messages)
-        
-        response = ""
-        for chunk in stream_response:
-            response += chunk
-            print(chunk, end="", flush=True)
-        
-        # Add assistant response to context
-        await self.context_manager.add_message("assistant", response)
-        
-        return response
+        # Use chat_stream generator to collect final response
+        try:
+            conversation_history = []
+            final_response = ""
+            
+            for chunk in self.llm_runner.chat_stream(user_text):
+                conversation_history = chunk.get("conversation_history", [])
+                
+                chunk_type = chunk.get("type")
+                
+                if chunk_type == "response":
+                    response_text = chunk.get("message", "")
+                    if response_text:
+                        final_response += response_text
+                        print(response_text, end="", flush=True)
+                
+                elif chunk_type == "error":
+                    error_msg = chunk.get("message", "An error occurred")
+                    print(f"❌ {error_msg}")
+                    return "Sorry, I encountered an error processing your request."
+                
+                elif chunk_type == "final":
+                    break
+            
+            # Save all new messages to context manager (skip user message as it's already saved)
+            for msg in conversation_history:
+                if msg["role"] == "user" and msg["content"] == user_text:
+                    continue  # Skip the user message we already added
+                await self.context_manager.add_message(msg["role"], msg["content"])
+            
+            return final_response if final_response else "I'm not sure how to help with that."
+            
+        except Exception as e:
+            print(f"❌ Error processing input: {e}")
+            return "Sorry, I encountered an error processing your request."
 
     async def _handle_conversation_turn(self) -> tuple[bool, str]:
         """

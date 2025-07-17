@@ -97,7 +97,7 @@ class CoquiTTS(BaseTTS):
         if not text.strip():
             return np.array([], dtype=np.float32)
             
-        print(f"🔊 Generating audio for text: {text}")
+        # print(f"🔊 Generating audio for text: {text}")
         # Generate audio using CoquiTTS 
         wav = self.model_manager.synthesizer.tts(text)
         

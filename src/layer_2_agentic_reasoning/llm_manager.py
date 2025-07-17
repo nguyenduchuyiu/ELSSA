@@ -1,6 +1,4 @@
 from llama_cpp import Llama
-# Import để register handler
-from src.layer_3_plugins.streaming_function_calling import chatml_function_calling_streaming
 
 class LLMManager:
     def __init__(self, model_path, **kwargs):
@@ -13,7 +11,6 @@ class LLMManager:
         if self.llm is None:
             self.llm = Llama(
                 model_path=self.model_path, 
-                chat_format="chatml-function-calling-streaming",
                 **self.kwargs
             )
         else:
