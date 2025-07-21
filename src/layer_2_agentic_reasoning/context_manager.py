@@ -6,7 +6,6 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import yaml
-from src.layer_3_plugins.tools import tools, format_tools_for_prompt
 
 config = yaml.safe_load(open("config.yaml", "r"))
 
@@ -94,21 +93,9 @@ class ContextManager:
                 start_time=self._get_current_timestamp()
             )
             
-            # Add system message
-            self.current_session.messages.append(ChatMessage(
-                role="system",
-                content=config["system_prompt"],
-                timestamp=self._get_current_timestamp(),
-                session_id=session_id
-            ))
+            # Don't add system messages to conversation history
+            # They will be added dynamically to each LLM request
             
-            # Add tool usage instructions
-            self.current_session.messages.append(ChatMessage(
-                role="system",
-                content=format_tools_for_prompt(tools),
-                timestamp=self._get_current_timestamp(),
-                session_id=session_id
-            ))
             print(f"🆕 Started new conversation session: {session_id}")
             return session_id
     
@@ -127,12 +114,10 @@ class ContextManager:
             
             self.current_session.messages.append(message)
             
-            # Trim context if too long (keep system message + recent messages)
-            if len(self.current_session.messages) > self.max_context_length + 1:
-                # Keep system message (first) + recent messages
-                system_msg = self.current_session.messages[0]
-                recent_messages = self.current_session.messages[-(self.max_context_length):]
-                self.current_session.messages = [system_msg] + recent_messages
+            # Trim context if too long (no system message to keep since we don't store them)
+            if len(self.current_session.messages) > self.max_context_length:
+                # Keep only the most recent messages
+                self.current_session.messages = self.current_session.messages[-self.max_context_length:]
                 print(f"🔄 Trimmed context to {len(self.current_session.messages)} messages")
             
             # Auto-save after each message

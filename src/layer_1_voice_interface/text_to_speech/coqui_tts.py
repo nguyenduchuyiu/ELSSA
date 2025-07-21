@@ -84,7 +84,7 @@ class CoquiTTS(BaseTTS):
     async def initialize(self) -> None:
         """Initialize CoquiTTS engine asynchronously"""
         if not self.ready:
-            print("🕐 Waiting for CoquiTTS to load...")
+            # print("🕐 Waiting for CoquiTTS to load...")
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self.model_manager.wait_for_loading)
             self.ready = self.model_manager.is_ready()

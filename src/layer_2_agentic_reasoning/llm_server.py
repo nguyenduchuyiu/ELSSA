@@ -27,8 +27,8 @@ completion_kwargs = {
 
 manager = LLMManager(model_path, **init_kwargs)
 
-@app.post("/chat")
-async def chat(request: Request):
+@app.post("/chat_stream")
+async def chat_stream(request: Request):
     try:
         llm = manager.get()
     except RuntimeError:

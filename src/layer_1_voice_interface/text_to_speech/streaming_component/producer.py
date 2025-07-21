@@ -34,12 +34,12 @@ class StreamingProducer:
                 if sentence:                        
                     try:
                         # Generate audio chunk synchronously to avoid race conditions
-                        print(f"\n🔊 Generating chunk {chunk_count}: '{sentence[:50]}...'")
+                        # print(f"\n🔊 Generating chunk {chunk_count}: '{sentence[:50]}...'")
                         audio_chunk = await self.tts._generate_chunk_async(sentence)
                         
                         # Queue immediately when ready 
                         await synthesis_queue.put(audio_chunk)
-                        print(f"🏭 Audio chunk {chunk_count} ready and queued")
+                        # print(f"🏭 Audio chunk {chunk_count} ready and queued")
                         chunk_count += 1
                         
                     except Exception as e:
@@ -54,4 +54,4 @@ class StreamingProducer:
             result['interrupted'] = True
         finally:
             await synthesis_queue.put(None)
-            print(f"🏭 Producer Task completed - generated {chunk_count} chunks")
+            # print(f"🏭 Producer Task completed - generated {chunk_count} chunks")

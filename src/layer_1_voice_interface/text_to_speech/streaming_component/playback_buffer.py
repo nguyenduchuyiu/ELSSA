@@ -51,7 +51,7 @@ class PlaybackBuffer:
             free_space = self.buffer_size - self._available_samples
             if chunk_size > free_space:
                 # Buffer overflow - wait for space to become available
-                print(f"⚠️ Buffer overflow: need {chunk_size}, have {free_space} - waiting for space...")
+                # print(f"⚠️ Buffer overflow: need {chunk_size}, have {free_space} - waiting for space...")
                 
                 # Wait for buffer to have enough space (with timeout)
                 def has_space():

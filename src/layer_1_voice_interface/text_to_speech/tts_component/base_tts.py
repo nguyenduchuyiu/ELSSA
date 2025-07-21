@@ -29,7 +29,7 @@ class BaseTTS(ABC):
         self.audio_manager = None
         self.interrupt_manager = None
         self.streaming_orchestrator = None
-        self.initialize()
+        # Removed self.initialize() call - it's handled properly in async methods
     
     @abstractmethod
     async def initialize(self) -> None:
@@ -93,7 +93,7 @@ class BaseTTS(ABC):
         for i, chunk_text in enumerate(chunks):
             try:
                 # Generate chunk synchronously to avoid race conditions
-                print(f"🔊 Processing chunk {i+1}/{len(chunks)}: '{chunk_text}...'")
+                # print(f"🔊 Processing chunk {i+1}/{len(chunks)}: '{chunk_text}...'")
                 audio = self._generate_chunk(chunk_text)
                 chunk_audios.append(audio)
                 
@@ -105,7 +105,7 @@ class BaseTTS(ABC):
                 # Continue with other chunks instead of failing completely
                 continue
         
-        print(f"✅ Generated {len(chunk_audios)} audio chunks successfully")
+        # print(f"✅ Generated {len(chunk_audios)} audio chunks successfully")
         return chunk_audios
     
     def _combine_audio_chunks(self, chunk_audios: List[np.ndarray]) -> np.ndarray:
@@ -209,7 +209,7 @@ class BaseTTS(ABC):
                             print("🔄 TTS interrupted during continuous playback")
                             result['interrupted'] = True
                         else:
-                            print("✅ Continuous audio playback completed successfully")
+                            # print("✅ Continuous audio playback completed successfully")
                             result['completed'] = True
                     else:
                         result['completed'] = True

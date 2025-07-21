@@ -66,7 +66,7 @@ class LLMRunner:
         else:
             print("❌ LLM unload failed")
 
-    def chat(self, messages: list[dict]):
+    def chat_stream(self, messages: list[dict]):
         if self.proc is None:
             print("❌ Server not running")
             return
@@ -75,7 +75,7 @@ class LLMRunner:
             print("❌ LLM not loaded")
             return
 
-        url = f"http://localhost:{self.port}/chat"
+        url = f"http://localhost:{self.port}/chat_stream"
         data = {"prompt": messages}
         
         try:

@@ -27,7 +27,7 @@ class StreamingFeeder:
                     audio_chunk = await asyncio.wait_for(synthesis_queue.get(), timeout=5.0)
                     
                     if audio_chunk is None:  # End signal
-                        print("🚚 No more chunks to feed")
+                        # print("🚚 No more chunks to feed")
                         break
                         
                     # Apply fade transitions for smooth playback
@@ -45,7 +45,7 @@ class StreamingFeeder:
                     success = playback_buffer.write_chunk(processed_chunk)
                     if success:
                         duration = len(processed_chunk) / playback_buffer.sample_rate
-                        print(f"🚚 Fed chunk {chunk_count} to buffer ({duration:.2f}s)")
+                        # print(f"🚚 Fed chunk {chunk_count} to buffer ({duration:.2f}s)")
                         
                         # Clear processed_chunk immediately to free memory
                         del processed_chunk
@@ -80,6 +80,6 @@ class StreamingFeeder:
             result['chunk_count'] = chunk_count
             result['estimated_duration'] = total_samples / playback_buffer.sample_rate if total_samples > 0 else 0
             
-            print(f"🚚 Feeder Task completed - {chunk_count} chunks, {total_samples} samples")
-            print(f"🚚 Estimated duration: {result['estimated_duration']:.2f}s")
-            print(f"🚚 Final interrupted status: {result['interrupted']}")
+            # print(f"🚚 Feeder Task completed - {chunk_count} chunks, {total_samples} samples")
+            # print(f"🚚 Estimated duration: {result['estimated_duration']:.2f}s")
+            # print(f"🚚 Final interrupted status: {result['interrupted']}")

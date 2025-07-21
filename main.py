@@ -213,6 +213,24 @@ class ELSSASystem:
                 self.current_state = SystemState.ACTIVE
             return True
 
+    def _accumulate_text_stream(self, text_stream):
+        """
+        Wrapper to accumulate text chunks until they are longer than 3 characters
+        """
+        accumulated_text = ""
+        
+        for chunk in text_stream:
+            accumulated_text += chunk
+            
+            # Check if accumulated text is long enough to send to TTS
+            if len(accumulated_text.strip()) > 3:
+                yield accumulated_text
+                accumulated_text = ""
+        
+        # Send any remaining text at the end
+        if accumulated_text.strip():
+            yield accumulated_text
+
     async def _process_user_input_streaming(self, user_text: str) -> bool:
         """
         Process user input and stream response directly to TTS
@@ -229,7 +247,10 @@ class ELSSASystem:
         context_messages = await self.context_manager.get_conversation_context()
         
         # Start streaming response
-        stream_response = self.llm_runner.chat(context_messages)
+        stream_response = self.llm_runner.chat_stream(context_messages)
+        
+        # Wrap stream with text accumulation
+        accumulated_stream = self._accumulate_text_stream(stream_response)
         
         # Transition to speaking state
         await self.transition_to_speaking()
@@ -240,9 +261,9 @@ class ELSSASystem:
         # Stream response directly to TTS
         full_response = ""
         try:
-            # Use TTS streaming capability
+            # Use TTS streaming capability with accumulated text
             result = await self.tts.speak_stream_async(
-                stream_response,
+                accumulated_stream,
                 interruptible=True,
                 interrupt_callback=self._on_interrupt_detected
             )

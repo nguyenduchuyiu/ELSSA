@@ -22,8 +22,8 @@ class StreamingMonitor:
         
         while elapsed < timeout:
             status = playback_buffer.get_buffer_status()
-            print(f"📊 Buffer status: {status['available_samples']} samples, "
-                  f"{status['buffer_fill_ratio']:.1%} full, playing: {status['is_playing']}")
+            # print(f"📊 Buffer status: {status['available_samples']} samples, "
+            #       f"{status['buffer_fill_ratio']:.1%} full, playing: {status['is_playing']}")
             
             # Check for interruption using interrupt_manager
             if hasattr(self.tts, 'interrupt_manager') and self.tts.interrupt_manager.is_interrupted():
@@ -42,8 +42,8 @@ class StreamingMonitor:
                 return False
             
             # Check if buffer is finished but still has samples
-            if status['finished'] and status['available_samples'] > 0:
-                print(f"📊 Buffer finished but still has {status['available_samples']} samples - waiting for playback...")
+            # if status['finished'] and status['available_samples'] > 0:
+                # print(f"📊 Buffer finished but still has {status['available_samples']} samples - waiting for playback...")
             
             await asyncio.sleep(check_interval)
             elapsed += check_interval

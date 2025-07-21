@@ -3,86 +3,79 @@ import os
 import re
 import time
 import random
+import yaml
 from src.layer_2_agentic_reasoning.llm_runner import LLMRunner
 from src.layer_2_agentic_reasoning.context_manager import ContextManager
 from google import genai
 from src.layer_2_agentic_reasoning.system_prompt import system_prompt, turing_test_questions
 from src.layer_3_plugins.tools import tools
 
+# Load config to get max_context_length
+config = yaml.safe_load(open("config.yaml", "r"))
+
 async def main():
-    context_manager = ContextManager()
-
-    await context_manager.start_new_session()
+    # Use config values for proper testing
+    context_manager = ContextManager(
+        context_dir="data/context",
+        max_context_length=config["max_context_length"]
+    )
     
-
+    # Start a new session
+    session_id = await context_manager.start_new_session()
+    print(f"Started session: {session_id}")
     
-    prompt = [
-        
-        # {"role": "user", "content": random.choice(turing_test_questions)},
-        {
-            # "role": "user", "content": "Find and open song Photograpghy by Ed Sheeran on YouTube."
-            "role": "user", "content": "Which tool do you have?"
-         }
-    ]
-    for p in prompt:
-        await context_manager.add_message(p["role"], p["content"])
-
-    conversation_context = await context_manager.get_conversation_context()
-
-    # client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
-    # from google.genai import types
-    # model = "gemini-2.0-flash"
-    # tool = types.Tool(function_declarations=tools)
-    # config = types.GenerateContentConfig(tools=[tool])
-
-    # response = client.models.generate_content_stream(
-    #     model=model,
-    #     contents="Find and open song Photograpghy by Ed Sheeran on YouTube.",
-    #     config=config,
-    # )
-    # for chunk in response:
-    #     # print(chunk.text, end="", flush=True)
-    #     print(f"Chunk: {chunk.text}. Length: {len(chunk.text)}\n")
-        
     runner = LLMRunner()
-    runner.launch()
-    time.sleep(5)
-    print(f"User: {conversation_context[1]['content']}")
+    runner.start_server()
+    runner.load_model()
+
     try:
-        # answer = runner.chat(conversation_context)
-        # print(answer)
-        for chunk in runner.chat_stream(conversation_context[1]['content']):
-                # Update conversation history
+        # Test multiple conversations to verify context management
+        test_messages = [
+            "Hello, how are you?",
+            "What's your name?", 
+            "What tools do you have?",
+            "Can you search for a song on YouTube?",
+            "Tell me a joke."
+        ]
+        
+        for i, user_input in enumerate(test_messages, 1):
+            print(f"\n🔄 Turn {i}: {user_input}")
+            
+            # Add user message
+            await context_manager.add_message("user", user_input)
+            
+            # Get conversation context (should not contain system prompts)
+            conversation_context = await context_manager.get_conversation_context()
+            print(f"📝 Context length: {len(conversation_context)} messages")
+            
+            # Use the corrected flow
+            for chunk in runner.chat_stream(conversation_context):
                 conversation_history = chunk.get("conversation_history", [])
                 
                 chunk_type = chunk.get("type")
                 
                 if chunk_type == "response":
-                    # Speak response immediately
                     response_text = chunk.get("message", "")
-                    print(response_text)
+                    print(f"🤖 {response_text}")
                 
                 elif chunk_type == "tool_start":
-                    # Optional: Could speak tool execution notification
                     tool_calls = chunk.get("tool_calls", [])
-                    print(f"Tool calls: {tool_calls}")
-                    # await self.speak_with_interrupt_support("Let me help you with that.")
-                    pass
+                    print(f"🔧 Tool calls: {tool_calls}")
                 
-                elif chunk_type == "tool_complete":
-                    # Optional: Could speak tool completion
-                    pass
-                
-                elif chunk_type == "error":
-                    error_msg = chunk.get("message", "An error occurred")
-                    print(f"❌ {error_msg}")                
                 elif chunk_type == "final":
-                    print("✅ Conversation completed")
+                    # Save new messages to context manager
+                    current_context = await context_manager.get_conversation_context()
+                    current_length = len(current_context)
+                    
+                    for j, msg in enumerate(conversation_history[current_length:], current_length):
+                        if not (msg["role"] == "user" and msg["content"] == user_input):
+                            await context_manager.add_message(msg["role"], msg["content"])
                     break
     except Exception as e:
         print(e)
         runner.stop_server()
-    print("\n")
+    
+    print(f"\n📊 Final context length: {len(await context_manager.get_conversation_context())} messages")
     await context_manager.end_current_session()
     runner.stop_server()
     

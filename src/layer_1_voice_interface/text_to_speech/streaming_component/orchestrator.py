@@ -17,8 +17,11 @@ class StreamingOrchestrator:
     
     def __init__(self, tts_instance):
         self.tts = tts_instance
+        
         self.producer = StreamingProducer(tts_instance)
+        
         self.feeder = StreamingFeeder(tts_instance)
+        
         self.monitor = StreamingMonitor(tts_instance)
     
     async def coordinate_streaming(
