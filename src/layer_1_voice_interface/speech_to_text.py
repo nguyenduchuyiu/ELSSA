@@ -85,6 +85,9 @@ class SpeechToText:
         self._all_text_lock = threading.Lock()
         self.chunk_count = 0  # Track chunk number for offset calculation
 
+        # Store raw audio for final ASR
+        self.raw_audio_buffer = []
+
         # Threads
         self._recorder_thread = threading.Thread(target=self._record_stream, daemon=True)
         self._worker_thread = threading.Thread(target=self._asr_worker, daemon=True)
@@ -109,6 +112,10 @@ class SpeechToText:
         if status:
             print(f"⚠️ Audio status: {status}")
         data = indata[:, 0]  # mono
+        
+        # Store raw audio for final transcription
+        self.raw_audio_buffer.extend(data.tolist())
+        
         with self.buffer_lock:
             self.audio_buffer.extend(data.tolist())
             if len(self.audio_buffer) >= self.chunk_samples:
@@ -351,6 +358,7 @@ class SpeechToText:
         self._reset_silence_timer()
         with self._all_text_lock:
             self.segments.clear()
+        self.raw_audio_buffer.clear()  # Clear raw audio buffer
         self.last_text_time = None
         self.chunk_count = 0  # Track chunk number for offset calculation
         print("🔄 ASR session reset")
@@ -392,10 +400,6 @@ class SpeechToText:
         print("\n❌ Stopping SpeechToText...")
         self.stop_event.set()
         
-        # Get final text before cleanup
-        with self._all_text_lock:
-            final_text = self._complete_sentence(self.segments)
-        
         # Run thread joins in executor to avoid blocking event loop
         loop = asyncio.get_event_loop()
         
@@ -408,9 +412,28 @@ class SpeechToText:
         # Close audio stream
         self.audio_manager.close()
         
+        # Run final ASR on complete audio
+        final_text = ""
+        if self.raw_audio_buffer:
+            print("🎯 Running final ASR on complete audio...")
+            raw_audio = np.array(self.raw_audio_buffer, dtype=np.int16).astype(np.float32) / 32768.0
+            segments = self.asr.transcribe(raw_audio.tolist())
+            
+            # Process segments and combine
+            final_segments = []
+            for seg in segments:
+                seg["text"] = seg["text"].removesuffix(".").strip()
+                seg['text'] = self._filter_whisper_noise(seg['text'])
+                if self._is_meaningful_text(seg['text']):
+                    final_segments.append(seg)
+            
+            final_text = self._complete_sentence(final_segments)
+            print(f"🏆 Final transcript: '{final_text}'")
+        
         # Clear buffers (but keep ASR model in memory)
         with self.buffer_lock:
             self.audio_buffer.clear()
+        self.raw_audio_buffer.clear()
         
         # Clear queue
         while not self.audio_queue.empty():

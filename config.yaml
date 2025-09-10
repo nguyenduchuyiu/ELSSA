@@ -8,7 +8,7 @@ wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 interrupt_wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 
 # Session Management
-silence_timeout: 2  
+silence_timeout: 1.5  
 max_silence_retries: 3
 
 # ASR Settings
@@ -41,11 +41,11 @@ tts_timeout_buffer_wait: 30
 # model_path: "models/xLAM/Salesforce.xLAM-2-3b-fc-r.Q4_K_M.gguf"
 # model_path: "models/Phi/Phi-3-mini-128k-instruct.Q4_K_M.gguf"
 # model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-Q6_K_L.gguf"
-# model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-IQ3_M.gguf"
-model_path: "models/TinyLlama/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
+model_path: "models/Llama-3.2-3B-Instruct/Llama-3.2-3B-Instruct-IQ3_M.gguf"
+# model_path: "models/TinyLlama/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
 n_ctx: 16384
 temperature: 0.7
-max_tokens: 256
+max_tokens: 128
 stop: ["<|user|>", "<|assistant|>", "< Mayer|>", "<3", "<_assistant_|>", "<_user_|>", "<|im_start|>", "<|im_end|>"]
 n_gpu_layers: 0
 n_batch: 512
@@ -57,8 +57,9 @@ super_mode: false
 
 system_prompt: |
   You are ELSSA, an intelligent and emotionally-aware AI assistant. 
-  You are a helpful assistant. Answer user questions and help with tasks.
-  You should talk concise and to the point.
+  You are a helpful assistant. Answer user questions and help with tasks or small talk.
+  Talk concisely and to the point.
+
 # system_prompt: |
 #   You are ELSSA, an intelligent and emotionally-aware AI assistant. 
 #   You interact naturally, with a friendly, witty, and warm tone. 

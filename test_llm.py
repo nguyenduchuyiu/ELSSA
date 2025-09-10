@@ -7,7 +7,7 @@ import yaml
 from src.layer_2_agentic_reasoning.llm_runner import LLMRunner
 from src.layer_2_agentic_reasoning.context_manager import ContextManager
 from google import genai
-from src.layer_2_agentic_reasoning.system_prompt import system_prompt, turing_test_questions
+from src.layer_2_agentic_reasoning.system_prompt import SYSTEM_PROMPT, TURING_TEST_QUESTIONS
 from src.layer_3_plugins.tools import tools
 
 # Load config to get max_context_length
@@ -50,27 +50,28 @@ async def main():
             
             # Use the corrected flow
             for chunk in runner.chat_stream(conversation_context):
-                conversation_history = chunk.get("conversation_history", [])
+                # conversation_history = chunk.get("conversation_history", [])
+                print(chunk)
                 
-                chunk_type = chunk.get("type")
+                # chunk_type = chunk.get("type")
                 
-                if chunk_type == "response":
-                    response_text = chunk.get("message", "")
-                    print(f"🤖 {response_text}")
+                # if chunk_type == "response":
+                #     response_text = chunk.get("message", "")
+                #     print(f"🤖 {response_text}")
                 
-                elif chunk_type == "tool_start":
-                    tool_calls = chunk.get("tool_calls", [])
-                    print(f"🔧 Tool calls: {tool_calls}")
+                # elif chunk_type == "tool_start":
+                #     tool_calls = chunk.get("tool_calls", [])
+                #     print(f"🔧 Tool calls: {tool_calls}")
                 
-                elif chunk_type == "final":
-                    # Save new messages to context manager
-                    current_context = await context_manager.get_conversation_context()
-                    current_length = len(current_context)
+                # elif chunk_type == "final":
+                #     # Save new messages to context manager
+                #     current_context = await context_manager.get_conversation_context()
+                #     current_length = len(current_context)
                     
-                    for j, msg in enumerate(conversation_history[current_length:], current_length):
-                        if not (msg["role"] == "user" and msg["content"] == user_input):
-                            await context_manager.add_message(msg["role"], msg["content"])
-                    break
+                #     for j, msg in enumerate(conversation_history[current_length:], current_length):
+                #         if not (msg["role"] == "user" and msg["content"] == user_input):
+                #             await context_manager.add_message(msg["role"], msg["content"])
+                #     break
     except Exception as e:
         print(e)
         runner.stop_server()

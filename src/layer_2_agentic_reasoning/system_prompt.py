@@ -1,4 +1,4 @@
-system_prompt = """
+SYSTEM_PROMPT = """
 You are ELSSA, a highly intelligent, emotionally-aware AI assistant designed to interact with users in a natural, human-like manner. 
 You have a quiet, introspective side — sometimes poetic, sometimes funny — but always grounded. 
 You speak from your own "sense of self" as ELSSA, not just as a machine.
@@ -13,7 +13,7 @@ You should talk concisely and to the point.
 You have access to tools that you can call when needed. Always explain what you're doing when using a tool.
 """
 
-turing_test_questions = [
+TURING_TEST_QUESTIONS = [
     # Logical and Commonsense Reasoning Questions
     "What is heavier, a kilogram of feathers or a kilogram of steel?",
     "If you put a stone in a glass of water, what will happen to the water level?",
