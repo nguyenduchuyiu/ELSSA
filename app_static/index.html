@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ELSSA - Voice Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ELSSA</h1>
+            <div class="status-indicator">
+                <span id="status-text">Connecting...</span>
+                <div id="status-dot" class="status-dot connecting"></div>
+            </div>
+        </header>
+
+        <main>
+            <!-- Two-column layout -->
+            <div class="main-content">
+                <!-- System Logs Area -->
+                <div class="logs-container">
+                    <div class="logs-header">
+                        <h3>📋 System Logs</h3>
+                        <button id="clear-logs-btn" class="btn-small">Clear</button>
+                    </div>
+                    <div id="system-logs" class="system-logs">
+                        <div class="log-entry">
+                            <span class="timestamp">[Starting...]</span>
+                            <span class="message">🔗 Connecting to ELSSA...</span>
+                        </div>
+                        <div class="log-entry">
+                            <span class="timestamp">[Starting...]</span>
+                            <span class="message">🎤 Requesting microphone access...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Conversation Chatbox -->
+                <div class="chat-container">
+                    <div class="chat-header">
+                        <h3>💬 Conversation</h3>
+                        <button id="clear-chat-btn" class="btn-small">Clear</button>
+                    </div>
+                    <div id="conversation-chat" class="conversation-chat">
+                        <div class="welcome-message">
+                            <p>👋 Welcome! Say "Alexa" to wake up ELSSA or click the Wake Up button.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Voice Controls -->
+            <div class="voice-controls">
+                <div class="wake-controls">
+                    <button id="wake-btn" class="btn btn-wake" disabled>
+                        🌟 Wake Up ELSSA
+                    </button>
+                    <button id="sleep-btn" class="btn btn-sleep" disabled>
+                        😴 Sleep
+                    </button>
+                </div>
+
+                <div class="recording-status">
+                    <div id="recording-indicator" class="recording-indicator hidden">
+                        <div class="pulse-circle"></div>
+                        <span>Listening...</span>
+                    </div>
+                </div>
+
+                <div class="audio-controls">
+                    <div id="audio-level" class="audio-level">
+                        <div class="level-bar"></div>
+                        <div class="level-bar"></div>
+                        <div class="level-bar"></div>
+                        <div class="level-bar"></div>
+                        <div class="level-bar"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <div class="connection-status">
+                <span id="connection-status">Disconnected</span>
+            </div>
+            <div class="info">
+                <p>ELSSA - Emotional Language Learning Support Assistant</p>
+                <p>Speak naturally, I'm listening...</p>
+            </div>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

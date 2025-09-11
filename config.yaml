@@ -9,7 +9,7 @@ interrupt_wake_word_model: "models/openwakeword/alexa_v0.1.tflite"
 
 # Session Management
 silence_timeout: 1.5  
-max_silence_retries: 3
+max_silence_retries: 2
 
 # ASR Settings
 asr_model: "tiny.en"

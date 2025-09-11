@@ -4,6 +4,8 @@
 
 E.L.S.S.A is a powerful AI voice assistant with advanced speech processing, multiple LLM support, and a modular design, enabling natural voice interaction. But what's truly impressive? It runs entirely locally, even on CPU!
 
+![ELSSA Demo](demo.png)
+
 ## Technologies Used
 
 ### Core AI & Speech Processing
@@ -28,8 +30,6 @@ E.L.S.S.A is a powerful AI voice assistant with advanced speech processing, mult
 ### Development & Performance
 - **Async Programming**: AsyncIO for non-blocking operations and improved responsiveness
 - **Model Optimization**: GGUF quantization support for efficient CPU/GPU inference
-- **Fuzzy Matching**: FuzzyWuzzy with Levenshtein distance for robust text processing
-- **Package Management**: UV-compatible requirements for fast dependency resolution
 
 ## Performance
 
@@ -91,13 +91,22 @@ wget https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Ll
 
 ## Usage
 
-Run the main application:
+### Run in terminal:
 
 ```bash
 python main.py
 ```
 
 The system will initialize all components and wait for wake word activation. Speak the configured wake word to start interacting with E.L.S.S.A.
+
+### Run the full application:
+
+```bash
+python app.py
+```
+
+Then open your browser and navigate to: http://localhost:8001
+
 
 ## Notes
 
