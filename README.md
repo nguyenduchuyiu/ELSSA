@@ -37,9 +37,31 @@ E.L.S.S.A demonstrates excellent resource efficiency while running entirely on l
 
 ![ELSSA Resource Usage Monitor](resource_usage_plot.png)
 
-### Resource Usage Benchmarks
 
 ## Installation Guide
+
+E.L.S.S.A uses Git LFS for large files (models, checkpoints). Please follow these steps to properly clone and use the repository:
+
+### 1. Install Git LFS
+
+```bash
+git lfs install
+```
+
+### 2. Clone the repository
+
+```bash
+git clone https://github.com/nguyenduchuyiu/ELSSA.git
+cd ELSSA
+```
+
+### 3. Pull LFS files
+
+```bash
+git lfs pull
+```
+
+## Setup
 
 ### 1. Create a Python Virtual Environment
 
